@@ -1,0 +1,123 @@
+external_url: "http://localhost:8080"
+host: ""
+port: 8080
+status_response: "I'm OK"
+
+compression:
+  request:
+    enable_gzip: true
+  response:
+    enable_gzip: true
+
+auction_timeouts_ms:
+  default: 180000
+  max: 600000 # allow 10 minutes debug
+
+debug:
+  timeout_notification:
+    log: true
+    sampling_rate: 0
+    fail_only: false
+
+privacy:
+  ccpa:
+    enabled: false
+
+gdpr:
+  enabled: false
+  default_value: "0"
+  timeouts_ms:
+    init_vendorlist_fetches: 30000
+    active_vendorlist_fetch: 10000
+
+account_required: false
+
+account_defaults:
+  debug_allow: true
+  events:
+    enabled: true
+
+hooks:
+  enabled: true
+  modules:
+    test_provider:
+      test_tracer:
+        enabled: true
+
+  host_execution_plan:
+    endpoints:
+      /openrtb2/auction:
+        stages:
+          entrypoint:
+            groups:
+              timeout: 120000
+              hook_sequence:
+                - module_code: test_provider.test_tracer
+                  hook_impl_code: test_provider_test_tracer
+
+          processed_auction_request:
+            groups:
+              timeout: 120000
+              hook_sequence:
+                - module_code: test_provider.test_tracer
+                  hook_impl_code: test_provider_test_tracer
+
+          bidder_request:
+            groups:
+              timeout: 120000
+              hook_sequence:
+                - module_code: test_provider.test_tracer
+                  hook_impl_code: test_provider_test_tracer
+
+          raw_bidder_response:
+            groups:
+              timeout: 120000
+              hook_sequence:
+                - module_code: test_provider.test_tracer
+                  hook_impl_code: test_provider_test_tracer
+
+          all_processed_bid_responses:
+            groups:
+              timeout: 120000
+              hook_sequence:
+                - module_code: test_provider.test_tracer
+                  hook_impl_code: test_provider_test_tracer
+
+          auction_response:
+            groups:
+              timeout: 120000
+              hook_sequence:
+                - module_code: test_provider.test_tracer
+                  hook_impl_code: test_provider_test_tracer
+
+          exitpoint:
+            groups:
+              timeout: 120000
+              hook_sequence:
+                - module_code: test_provider.test_tracer
+                  hook_impl_code: test_provider_test_tracer
+
+# Stored Request Configuration
+stored_requests:
+  enabled: true
+  filesystem:
+    enabled: true
+
+stored_amp_req:
+  enabled: true
+
+stored_responses:
+  enabled: true
+
+  in_memory_cache:
+    type: none
+
+adapters:
+  appnexus:
+    platform_id: "platform_id"
+    debug:
+      allow: true
+  colossus:
+    debug:
+      allow: true
+ 
