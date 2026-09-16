@@ -1,0 +1,113 @@
+# Adopted from hubarDevPersonal/lending-positions-parser; project-specific exclusions are commented.
+version: "2"
+
+run:
+  timeout: 5m
+  relative-path-mode: gomod
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+  issues-exit-code: 1
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: standard
+  enable:
+    - asciicheck
+    - bidichk
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - govet
+    - iface
+    - ineffassign
+    - intrange
+    - lll
+    - makezero
+    - misspell
+    - nilerr
+    - nilnesserr
+    - noctx
+    - prealloc
+    - predeclared
+    - revive
+    - staticcheck
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+
+  settings:
+    gocyclo:
+      min-complexity: 25
+    copyloopvar:
+      check-alias: true
+    makezero:
+      always: true
+    iface:
+      enable: [unused, opaque, unexported]
+    misspell:
+      locale: US
+    lll:
+      line-length: 200
+      tab-width: 1
+    revive:
+      severity: error
+      rules:
+        - name: error-return
+        - name: error-naming
+        - name: receiver-naming
+        - name: if-return
+    gosec:
+      # G404: math/rand is not used for anything security-relevant here.
+      excludes: [G404]
+      severity: medium
+      confidence: medium
+    gocritic:
+      disabled-checks:
+        - captLocal
+        - commentFormatting
+
+  exclusions:
+    generated: lax
+    rules:
+      # Tests: keep signal high, noise low.
+      - path: _test\.go
+        linters: [errcheck, gocyclo, lll, unparam, goconst]
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+formatters:
+  enable:
+    - gofumpt
+    - golines
+  settings:
+    gofumpt:
+      extra-rules: true
+    golines:
+      max-len: 200
+      tab-len: 8
+      shorten-comments: true
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+output:
+  formats:
+    text:
+      path: stdout
+      colors: false
+      print-linter-name: true
+  sort-order: [linter, severity, file]

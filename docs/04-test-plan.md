@@ -1,17 +1,17 @@
 # 04 — Test Plan
 
 Requirements: [02-specification.md](02-specification.md). Design: [03-design.md](03-design.md).
-Test code lives in `modules/test_provider/test_tracer/*_test.go` (same package, `testify`). This phase delivers the tests in the
+Test code lives in `internal/testtracer/*_test.go` (same package, `testify`); `internal/tracecheck` has its own unit tests. This phase delivers the tests in the
 **red** state against an API skeleton; the implementation phase turns them green without changing the tests' intent.
 
 ## 1. Levels
 
 | Level | Where | What it proves | Tooling |
 |-------|-------|----------------|---------|
-| L1 Unit | `rules_test.go`, `tracer_test.go`, `output_test.go`, `module_test.go` | Rule validation, stop conditions with a fake clock, snapshot semantics, JSON contract, each hook in isolation | `go test ./modules/test_provider/test_tracer/` |
-| L2 Race | `race_test.go` (`TestRace*`) | Slot reservation under contention, concurrent bidder hooks on one trace, non-interleaved output | `go test -race -run '^TestRace' -count 3` |
+| L1 Unit | `rules_test.go`, `tracer_test.go`, `output_test.go`, `module_test.go`, `module_branches_test.go` | Rule validation, stop conditions with a fake clock, snapshot semantics, JSON contract, each hook in isolation | `make test` |
+| L2 Race | `race_test.go` (`TestRace*`) | Slot reservation under contention, concurrent bidder hooks on one trace, non-interleaved output | `go test ./internal/testtracer -race -run '^TestRace' -count 3` |
 | L3 Integration (in-process) | `integration_test.go` | The module driven by the real `hookexecution` executor and plan builder built from the provided `pbs.yaml` stage list; module-context propagation across stages; outcomes have no errors | `go test -run Integration` |
-| L4 End-to-end | `e2e/` | PBS with the module registered, the provided `pbs.yaml` and `02-send-bid-request.sh` unchanged, **live bidders**; asserts NDJSON on stdout, hook outcomes in the HTTP response and absence of `Not found hook` warnings. Two drivers: local checkout (`run.sh`) and Docker image (`run-docker.sh`) | `PBS_DIR=... e2e/run.sh` / `make docker-e2e` |
+| L4 End-to-end | `e2e/` | PBS with the module registered, the provided `pbs.yaml` and `02-send-bid-request.sh` unchanged, **live bidders**; asserts NDJSON on stdout, hook outcomes in the HTTP response and absence of `Not found hook` warnings. Assertions are implemented in `internal/tracecheck` (unit-tested) and run through `cmd/tracecheck`. Two drivers: local checkout (`scripts/e2e-live.sh`) and Docker image (`scripts/e2e-docker.sh`) | `make e2e` / `make docker-e2e` |
 | L5 Manual | [05-runbook.md](05-runbook.md) | Reviewer walkthrough with the provided `02-send-bid-request.sh` | shell |
 
 Exit criteria for the implementation phase: L1–L3 green with `-race`, `go vet` clean, L4 green on a machine with Go and the PBS checkout,
@@ -37,7 +37,7 @@ coverage ≥ 90 % statements for **each implemented hook** (official Go module g
 | FR-14 endpoint scope | `TestEntrypoint_IgnoresNonAuctionEndpoint`, `TestModule_TracesOnlyAuctionEndpoint` |
 | FR-15 never interfere | `TestHooks_NeverRejectNeverMutate`, `TestHooks_ToleratesNilModuleContextAndNilPayloads`, `TestAuctionTrace_NilInputsAreSafe`, `TestIntegration_OutcomesHaveNoErrors` |
 | FR-16 concurrency | `TestRaceAuctionTraceConcurrentAppends`, `TestRaceModuleConcurrentBidderHooks`, `TestRaceJSONEmitterConcurrentEmits`, `TestRaceModuleConcurrentRequests` |
-| NFR-04 | `go vet`, `gofmt -l` in `e2e/run.sh` and CI |
+| NFR-04 | `golangci-lint` (gofumpt, golines, gosec, revive, …) and `go vet` in `make lint` and CI |
 | NFR-05 | all L1 tests use `fakeClock` and `bytes.Buffer`/`syncBuffer` |
 
 ## 2.1 Status of the suite (2026-09-16)
@@ -78,14 +78,14 @@ sections present, `executor.GetOutcomes()` has only `StatusSuccess` results with
 The plan is the stage list from the provided `pbs.yaml`, expressed as JSON and unmarshalled into `config.HookExecutionPlan`, so the test
 fails if the config keys used in the assessment stop matching the PBS config schema.
 
-## 5. End-to-end (L4) — `e2e/run.sh`, live bidders
+## 5. End-to-end (L4) — `scripts/e2e-*.sh`, live bidders
 
 Preconditions: `PBS_DIR` points at a PBS checkout (v4 module path); Go ≥ 1.25; outbound internet; ports 8080/6060 free. No mocks by decision.
 
-1. Copy `modules/test_provider/test_tracer` into `$PBS_DIR/modules/`, `go generate ./modules/...`, `gofmt`/`go vet`, run the module tests, `go build`.
+1. `scripts/install-module.sh` (copy + `go generate`), `go vet`, module tests, `go build` (live) — or `docker build` (image), where the same steps run inside the build stage.
 2. Start PBS with the **provided** `pbs.yaml`, stdout → `trace.ndjson`, stderr → `pbs.log`.
 3. Send `01-bid-request-example.json` N times (N > `TracePacketsAmount` of the sample partner), then one request with an unknown account.
-4. Assert:
+4. Assert with `tracecheck -expect N -responses 'resp-*.json' -pbs-log pbs.log trace.ndjson`:
    - `trace.ndjson` has exactly `TracePacketsAmount` lines, each valid JSON, `partner_id == 664-025-677-881`, `packet_index` 1..N;
    - item 1: `incoming_request.body.id` equals the sample id;
    - item 2: `bidder_requests` covers exactly `{aceex, appnexus, amx, adyoulike}`, each with the same auction id and a timestamp ≥ the incoming one;

@@ -123,15 +123,15 @@ func (p TracePacket) utc() TracePacket {
 		c.Timestamp = c.Timestamp.UTC()
 		out.FinalResponse = &c
 	}
-	out.BidderRequests = make([]BidderRequestPacket, len(p.BidderRequests))
-	for i, b := range p.BidderRequests {
+	out.BidderRequests = make([]BidderRequestPacket, 0, len(p.BidderRequests))
+	for _, b := range p.BidderRequests {
 		b.Timestamp = b.Timestamp.UTC()
-		out.BidderRequests[i] = b
+		out.BidderRequests = append(out.BidderRequests, b)
 	}
-	out.BidderResponses = make([]BidderResponsePacket, len(p.BidderResponses))
-	for i, b := range p.BidderResponses {
+	out.BidderResponses = make([]BidderResponsePacket, 0, len(p.BidderResponses))
+	for _, b := range p.BidderResponses {
 		b.Timestamp = b.Timestamp.UTC()
-		out.BidderResponses[i] = b
+		out.BidderResponses = append(out.BidderResponses, b)
 	}
 	return out
 }

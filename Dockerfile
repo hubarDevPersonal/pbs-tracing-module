@@ -28,7 +28,8 @@ RUN git init -q . \
 # warm the module cache before copying our code so dependency downloads are cached across edits
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
-COPY modules/test_provider ./modules/test_provider
+# the module package lives in internal/testtracer in this repository; PBS's generator requires modules/<vendor>/<module>/module.go
+COPY internal/testtracer ./modules/test_provider/test_tracer
 RUN --mount=type=cache,target=/go/pkg/mod \
     go generate ./modules/... \
  && grep -q '"test_provider"' modules/builder.go \

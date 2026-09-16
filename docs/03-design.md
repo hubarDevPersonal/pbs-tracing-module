@@ -2,10 +2,14 @@
 
 Implements [02-specification.md](02-specification.md). PBS facts from [01-analysis.md](01-analysis.md) §3.
 
-## 1. Package layout (drop-in to the PBS tree)
+## 1. Package layout
+
+In this repository the package lives at `internal/testtracer`; the Dockerfile and `scripts/install-module.sh` copy it to
+`<pbs>/modules/test_provider/test_tracer` (the path PBS's generator requires). The package imports only PBS and the standard
+library, so the copy is verbatim.
 
 ```text
-modules/test_provider/test_tracer/
+internal/testtracer/          → modules/test_provider/test_tracer/ in the PBS tree
 ├── module.go            # Builder, Module, the seven hook handlers, module-context keys
 ├── rules.go             # Rule type, hardcoded defaultRules, validateRules
 ├── tracer.go            # Tracer (per-partner state, stop conditions), AuctionTrace (per-request collector)
@@ -166,8 +170,8 @@ Durations are compared with monotonic-clock-backed `time.Time` values (`Sub`), s
 
 ## 7. Registration and configuration
 
-1. Copy the package to `<pbs>/modules/test_provider/test_tracer/`.
-2. Run `go generate ./modules/...` (executes `modules/generator/buildergen.go`) to regenerate `modules/builder.go`; it adds
+1. `PBS_DIR=<pbs> scripts/install-module.sh` copies `internal/testtracer` to `<pbs>/modules/test_provider/test_tracer/`.
+2. It then runs `go generate ./modules/...` (executes `modules/generator/buildergen.go`) to regenerate `modules/builder.go`; it adds
    `"test_provider": {"test_tracer": test_providerTest_tracer.Builder}`.
 3. Configuration is already present in the provided `pbs.yaml`:
    `hooks.enabled: true`, `hooks.modules.test_provider.test_tracer.enabled: true`, and the host execution plan for the seven stages.

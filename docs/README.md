@@ -1,10 +1,10 @@
 # Deliverables — Prebid Server Tracing Module (`test_provider.test_tracer`)
 
-This folder contains the analysis and planning artefacts for the technical assessment described in
-[../README.md](../README.md). The implementation phase follows these documents.
+This folder contains the assessment text and the engineering artefacts for the module. Project overview: [../README.md](../README.md).
 
 | # | Document | Purpose |
 |---|----------|---------|
+| 00 | [00-assessment.md](00-assessment.md) | The original task statement, unchanged. |
 | 01 | [01-analysis.md](01-analysis.md) | Facts established from the Prebid Server source and a live run of the provided artefacts. Ambiguities and the decisions taken. |
 | 02 | [02-specification.md](02-specification.md) | Functional and non-functional requirements with acceptance criteria, the trace JSON contract, and the rule/state model. |
 | 03 | [03-design.md](03-design.md) | Technical design: package layout, types, hook-by-hook behaviour, concurrency model, registration, testability seams. |
@@ -15,9 +15,10 @@ Code artefacts produced in this phase:
 
 | Path | Content |
 |------|---------|
-| [../modules/test_provider/test_tracer/](../modules/test_provider/test_tracer/) | Drop-in module package for the Prebid Server tree: implementation (`module.go`, `rules.go`, `tracer.go`, `output.go`), module README, and the test suite (58 tests, race-clean, 91 % coverage). |
+| [../internal/testtracer/](../internal/testtracer/) | The module package (copied to `<pbs>/modules/test_provider/test_tracer` at build time): implementation, module README, test suite (58 tests, race-clean, 91 % coverage). |
+| [../internal/tracecheck/](../internal/tracecheck/), [../cmd/tracecheck/](../cmd/tracecheck/) | Verification library and CLI for NDJSON traces; the assertion step of the e2e scripts. |
 | [../Dockerfile](../Dockerfile), [../Makefile](../Makefile), [../docker-compose.yml](../docker-compose.yml) | Build PBS (pinned commit) with the module compiled in and the assessment's `pbs.yaml` baked in; `make docker-e2e` runs the full check. |
-| [../e2e/](../e2e/) | End-to-end driver scripts (local checkout and Docker): builds PBS with the module, runs it with the provided `pbs.yaml` against live bidders, asserts the NDJSON trace. |
+| [../scripts/](../scripts/) | `install-module.sh`, `e2e-live.sh` (local checkout), `e2e-docker.sh` (image): builds PBS with the module, runs it with the provided `pbs.yaml` against live bidders, asserts the NDJSON trace. |
 
 Conventions used throughout:
 

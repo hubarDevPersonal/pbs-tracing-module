@@ -5,4 +5,4 @@ services:
     ports:
       - "8080:8080"
       - "6060:6060"
-    # trace packets: docker compose logs --no-log-prefix pbs 2>/dev/null
+    # trace packets only: docker compose logs --no-log-prefix pbs 2>/dev/null

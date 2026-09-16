@@ -394,7 +394,11 @@ func TestHooks_NeverRejectNeverMutate(t *testing.T) {
 	assert.False(t, bidderReq.Reject)
 	assert.Empty(t, bidderReq.ChangeSet.Mutations())
 
-	bidderResp, err := m.HandleRawBidderResponseHook(ctx, auctionCtx(sampleRequestAccountID, mc), hookstage.RawBidderResponsePayload{BidderResponse: sampleBidderResponse("appnexus", "b", 1), Bidder: "appnexus"})
+	bidderResp, err := m.HandleRawBidderResponseHook(
+		ctx,
+		auctionCtx(sampleRequestAccountID, mc),
+		hookstage.RawBidderResponsePayload{BidderResponse: sampleBidderResponse("appnexus", "b", 1), Bidder: "appnexus"},
+	)
 	require.NoError(t, err)
 	assert.False(t, bidderResp.Reject)
 	assert.Empty(t, bidderResp.ChangeSet.Mutations())

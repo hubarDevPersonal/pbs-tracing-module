@@ -124,7 +124,7 @@ func (t *Tracer) Status(partnerID string) (status PartnerStatus, found bool) {
 
 // AuctionTrace collects the four kinds of trace data for one auction. It is shared between the
 // concurrent per-bidder hooks of the same request and is therefore mutex-guarded.
-// All inputs are snapshotted (marshalled or copied) at call time.
+// All inputs are snapshotted (marshaled or copied) at call time.
 type AuctionTrace struct {
 	mu              sync.Mutex
 	partnerID       string
@@ -223,10 +223,8 @@ func (a *AuctionTrace) Packet(completedAt time.Time) TracePacket {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	reqs := make([]BidderRequestPacket, len(a.bidderRequests))
-	copy(reqs, a.bidderRequests)
-	resps := make([]BidderResponsePacket, len(a.bidderResponses))
-	copy(resps, a.bidderResponses)
+	reqs := append(make([]BidderRequestPacket, 0, len(a.bidderRequests)), a.bidderRequests...)
+	resps := append(make([]BidderResponsePacket, 0, len(a.bidderResponses)), a.bidderResponses...)
 
 	return TracePacket{
 		Module:    ModuleCode,

@@ -272,7 +272,8 @@ func TestAuctionTrace_PreservesInvocationOrder(t *testing.T) {
 	}
 
 	p := trace.Packet(testStart)
-	var reqOrder, respOrder []string
+	reqOrder := make([]string, 0, len(p.BidderRequests))
+	respOrder := make([]string, 0, len(p.BidderResponses))
 	for _, r := range p.BidderRequests {
 		reqOrder = append(reqOrder, r.Bidder)
 	}

@@ -115,7 +115,7 @@ func TestAuctionTrace_BidderResponseSnapshotCoversOptionalFields(t *testing.T) {
 	assert.Contains(t, string(v.Bids[0].BidVideo), `"duration":30`)
 	assert.Contains(t, string(v.FledgeAuctionConfigs), `"seller"`)
 
-	// the whole packet must still serialise as one valid JSON document
+	// the whole packet must still serialize as one valid JSON document
 	raw, err := json.Marshal(p)
 	require.NoError(t, err)
 	assert.True(t, json.Valid(raw))

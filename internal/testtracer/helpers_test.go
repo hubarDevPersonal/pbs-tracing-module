@@ -142,7 +142,7 @@ func auctionCtx(accountID string, mc *hookstage.ModuleContext) hookstage.ModuleI
 
 func entrypointPayload(body []byte) hookstage.EntrypointPayload {
 	return hookstage.EntrypointPayload{
-		Request: httptest.NewRequest(http.MethodPost, auctionEndpoint, bytes.NewReader(body)),
+		Request: httptest.NewRequestWithContext(context.Background(), http.MethodPost, auctionEndpoint, bytes.NewReader(body)),
 		Body:    body,
 	}
 }

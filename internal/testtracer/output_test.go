@@ -56,8 +56,10 @@ func TestJSONEmitter_PacketSchema(t *testing.T) {
 	var obj map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal([]byte(lines[0]), &obj))
 
-	wantKeys := []string{"module", "partner_id", "rule", "packet_index", "auction_id", "started_at", "completed_at",
-		"incoming_request", "bidder_requests", "bidder_responses", "final_response"}
+	wantKeys := []string{
+		"module", "partner_id", "rule", "packet_index", "auction_id", "started_at", "completed_at",
+		"incoming_request", "bidder_requests", "bidder_responses", "final_response",
+	}
 	for _, k := range wantKeys {
 		assert.Contains(t, obj, k)
 	}
