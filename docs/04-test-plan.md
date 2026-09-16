@@ -15,7 +15,7 @@ Test code lives in `modules/test_provider/test_tracer/*_test.go` (same package, 
 | L5 Manual | [05-runbook.md](05-runbook.md) | Reviewer walkthrough with the provided `02-send-bid-request.sh` | shell |
 
 Exit criteria for the implementation phase: L1–L3 green with `-race`, `go vet` clean, L4 green on a machine with Go and the PBS checkout,
-coverage of the module package ≥ 90 % statements (PBS `scripts/check_coverage.sh` threshold is per-package).
+coverage ≥ 90 % statements for **each implemented hook** (official Go module guide) and for the package as a whole (PBS `scripts/check_coverage.sh`).
 
 ## 2. Traceability matrix
 

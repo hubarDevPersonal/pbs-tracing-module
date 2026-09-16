@@ -105,6 +105,7 @@ A new trace is refused when the number of traces **started** for the partner equ
 | NFR-04 | Code quality: `gofmt`, `go vet` clean; unit tests in the same package; concurrency tests named `TestRace*` per PBS `docs/developers/automated-tests.md`. |
 | NFR-05 | Testability: clock (`func() time.Time`) and output writer (`io.Writer`) are injectable; production wiring uses `time.Now` and `os.Stdout`. |
 | NFR-06 | Observability: internal errors are logged via PBS `logger` (glog → stderr) with the module code prefix; no logging on the happy path other than the trace itself. |
+| NFR-07 | Module rules compliance (docs.prebid.org): the module creates no bids, adds nothing to creatives, makes no outbound calls and does not mutate payloads; user data in traces is written only to the local process stdout and is never transmitted. |
 
 ## 4. Rule and state model
 

@@ -106,6 +106,26 @@ PBS logs through glog to stderr. Nothing else writes to stdout, so newline-delim
 - `auction_response` and `exitpoint` are both invoked from `sendAuctionResponse`, also on hook rejection paths. Neither runs when PBS fails the request early with 4xx/5xx (`writeError`). `exitpoint` receives the very object passed to the JSON encoder, after `response.ext.prebid.modules` enrichment.
 - Hook outcomes appear in `response.ext.prebid.modules` when the request has `ext.prebid.debug: true` and the account allows debug (`trace: "verbose"` adds debug messages). The sample request enables this, which makes hook execution visible in the HTTP response for verification.
 
+## 3.4 Cross-check against the official module documentation
+
+Checked on 2026-09-16 against the two pages referenced by the assessment:
+[Understand the Endpoints and Stages](https://docs.prebid.org/prebid-server/developers/add-a-module.html#2-understand-the-endpoints-and-stages) and
+[Building a Go Module for Prebid Server](https://docs.prebid.org/prebid-server/developers/add-a-module-go.html).
+
+| Topic | Official docs | Source (v4 master) / this design | Resolution |
+|-------|---------------|----------------------------------|------------|
+| Stage list and semantics | 8 stages; `entrypoint` = raw request before validation, `processed_auction_request` = stored requests merged and enrichments done, `bidder_request` / `raw_bidder_response` "called in parallel for each bidder", `auction_response` = last chance to modify, `exitpoint` = last step before the response goes to the client | identical | matches §3.2 |
+| `exitpoint` availability | listed as "PBS-Java 3.16+"; the Go page lists only 7 interfaces | `hookstage.Exitpoint` exists in the Go source and the provided `pbs.yaml` plans it | docs lag behind the code; design uses `exitpoint` (D7) |
+| Module code / config layout | `hooks.modules.<vendor>.<module>.enabled`, plan `groups` as a **list** of `{timeout, hook_sequence[{module_code, hook_impl_code}]}` | identical | confirms §2.2: the list form is canonical, the provided mapping form works only through coercion |
+| Directory naming | vendor and module directory names must be Go identifiers (letters, digits, `_`) | `test_provider/test_tracer` | compliant |
+| Registration | `make build-modules` / `go generate modules/modules.go`; never edit `builder.go` by hand | identical | design §7 |
+| `ModuleContext` API | shown as a plain `map[string]interface{}`; docs recommend that a module using the parallel stages supply an `Entrypoint` hook that creates a shared, thread-safe value (e.g. `*sync.Map`) | v4 source replaced the map with a `sync.RWMutex`-guarded struct (`Get`/`Set`) | design follows the docs' recommendation (context created at `entrypoint`, per-request `AuctionTrace` is mutex-guarded) using the v4 API; noted in design §2 |
+| Import path | `github.com/prebid/prebid-server/v3/...` | checkout is `v4` | module imports must follow the module path of the target checkout (`go.mod`) |
+| Module rules | modules must not create bids, must not add undisclosed pixels, must honour Activity Controls for user data | tracer is read-only: no mutations, no bids, no outbound calls | compliant; PII in traces goes only to local stdout (spec §6 keeps redaction out of scope) |
+| Testing | "Each implemented hook must be at least 90% covered by unit tests"; `TestRace*` convention | test plan required ≥ 90 % per package | tightened to **≥ 90 % per implemented hook** in [04-test-plan.md](04-test-plan.md) §1 |
+| Documentation | module `README.md` with description, links and maintainer contact; a page on docs.prebid.org for upstreamed modules | README present; docs.prebid.org page not applicable to an assessment | README lists maintainer; upstream page out of scope |
+| Timing | "The amount of time your module takes to perform its actions will be limited by PBS-core" | group timeout 120 000 ms in the provided plan; hooks do marshalling only | NFR-01 |
+
 ## 4. Ambiguities and decisions
 
 | # | Topic | Options | Decision | Rationale |

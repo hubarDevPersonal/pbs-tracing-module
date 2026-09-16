@@ -88,6 +88,13 @@ Snapshots: `AddBidderRequest`/`AddBidderResponse`/`SetFinalResponse` marshal **a
 standard) and store `json.RawMessage`. The exchange keeps mutating request/response objects after the hook returns, so storing pointers
 would produce non-deterministic traces. `SetIncomingRequest` copies the byte slice for the same reason.
 
+### 2.1 Note on the `ModuleContext` API
+
+The official Go module guide still documents `hookstage.ModuleContext` as a plain map and advises modules that touch the parallel
+stages to create a thread-safe value (`*sync.Map`) in an `Entrypoint` hook. In the v4 source the type is a `sync.RWMutex`-guarded
+struct with `Get`/`Set`, so the map literal from the docs no longer compiles. The design keeps the documented intent — the shared
+per-request value is created at `entrypoint` and every field of `AuctionTrace` is guarded by its own mutex — and uses the v4 API.
+
 ## 3. Hook-by-hook behaviour
 
 All handlers: check `miCtx.Endpoint == auctionEndpoint` first (FR-14); on mismatch return an empty result with `ModuleContext: miCtx.ModuleContext`.
