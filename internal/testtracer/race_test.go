@@ -25,7 +25,7 @@ func TestRaceTracerBeginNeverExceedsAmount(t *testing.T) {
 
 	var started atomic.Int32
 	var wg sync.WaitGroup
-	for i := 0; i < attempts; i++ {
+	for range attempts {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -51,7 +51,7 @@ func TestRaceAuctionTraceConcurrentAppends(t *testing.T) {
 
 	const n = 64
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for range n {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
@@ -78,7 +78,7 @@ func TestRaceModuleConcurrentBidderHooks(t *testing.T) {
 
 	const bidders = 32
 	var wg sync.WaitGroup
-	for i := 0; i < bidders; i++ {
+	for i := range bidders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -112,7 +112,7 @@ func TestRaceJSONEmitterConcurrentEmits(t *testing.T) {
 
 	const n = 100
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -141,7 +141,7 @@ func TestRaceModuleConcurrentRequests(t *testing.T) {
 	wrapper := requestWrapperFrom(t, body) // read-only from the goroutines below
 
 	var wg sync.WaitGroup
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

@@ -1,36 +1,73 @@
-# Technical Assessment: Prebid Server Tracing Module
+# pbs-tracing-module
 
-## Overview
-Your task is to implement a custom Prebid Server module (in Go) that traces and collects specific auction data throughout the request lifecycle. 
+A [Prebid Server](https://github.com/prebid/prebid-server) (Go) module, `test_provider.test_tracer`, that traces auctions on
+`/openrtb2/auction` for selected partners and prints one JSON object per traced auction to **stdout**. Built for the technical
+assessment in [docs/00-assessment.md](docs/00-assessment.md).
 
-## Provided Files
-* `01-bid-request-example.json`: An example of the BidRequest payload that will be sent to the Prebid Server.
-* `02-send-bid-request.sh`: A shell script containing the `curl` command to send the sample BidRequest.
-* `pbs.yaml`: A ready-to-run Prebid Server configuration file.
+Stack: Go 1.25, Prebid Server v4 (pinned upstream commit as a Go dependency), Docker. No mocks: end-to-end runs against live bidders.
 
-## Task Description
-Create a Prebid Server module that traces (collects) the following auction data:
-1. The **incoming BidRequest** and its timestamp.
-2. The **outgoing BidRequest** to a specific bidder, its timestamp, and the bidder's name.
-3. The **incoming BidResponse** from a specific bidder, its timestamp, and the bidder's name.
-4. The **resulting final Auction Response** that is sent back to the client, along with its timestamp.
+---
 
-## Conditions and Requirements
-* **AI Assistance:** The use of AI-coding helpers (e.g., GitHub Copilot, ChatGPT, Claude) is **strictly advised**.
-* **Output:** The collected trace object must be formatted as JSON and printed directly to the standard output (console).
-* **Tracing Parameters:** Tracing rules **should be hardcoded** as set of rules(objects), each of them containing the following parameters: 
-  * `PartnerID`
-  * `Duration`
-  * `TracePacketsAmount`
-* **Trigger Condition:** A trace is initiated if an incoming BidRequest's `Account.ID` matches any rule's `PartnerID`.
-* **Stop Conditions:** Tracing for a specific partner must stop when either of the following conditions is met (whichever occurs first):
-  * **Time Limit:** The time elapsed since the *first* traced BidRequest for that partner exceeds the `Duration`.
-  * **Amount Limit:** The total number of collected traces for the partner reaches `TracePacketsAmount`.
-* **Account ID Mapping:** The `Account.ID` provided by the Prebid server maps directly to the `PartnerID` used in your tracing conditions.
-* **Test Flag:** The provided `01-bid-request-example.json` includes the field `"test": 1`. This safely forces the Prebid Server to always return at least one valid BidResponse from the `appnexus` bidder, which is highly useful for validating your tracing logic.
-* **Endpoint Scope:** The module should strictly affect the `/openrtb2/auction` endpoint. Any other endpoint is out of scope of the assessment.
+## What it does
 
-## Reference Materials
-Please refer to the official Prebid Server documentation for guidance on creating modules and understanding the request lifecycle:
-* [Understand the Endpoints and Stages](https://docs.prebid.org/prebid-server/developers/add-a-module.html#2-understand-the-endpoints-and-stages)
-* [Building a Go Module for Prebid Server](https://docs.prebid.org/prebid-server/developers/add-a-module-go.html)
+For every auction whose resolved `Account.ID` matches a hardcoded rule `{PartnerID, Duration, TracePacketsAmount}` the module records
+
+1. the incoming `BidRequest` (raw body) with timestamp;
+2. every outgoing `BidRequest` per bidder with timestamp and bidder name;
+3. every `BidResponse` received from a bidder with timestamp and bidder name;
+4. the final auction response returned to the client with timestamp;
+
+and writes the packet as one NDJSON line at the `exitpoint` stage. Tracing for a partner stops when `Duration` since the first
+traced request is exceeded or `TracePacketsAmount` auctions were traced, whichever comes first. The module never rejects requests
+and never mutates payloads. Contract and decisions: [docs/02-specification.md](docs/02-specification.md), [docs/01-analysis.md](docs/01-analysis.md).
+
+## Quick start (Docker)
+
+```bash
+make docker-build                                   # PBS @ pinned commit + module; module tests run inside the build
+docker run --rm -p 8080:8080 pbs-tracer:local 2>pbs.log | tee trace.ndjson
+sh 02-send-bid-request.sh                           # other terminal; repeat > TracePacketsAmount times
+```
+
+`make docker-e2e` does the above end to end and verifies the trace with `cmd/tracecheck`.
+
+## Repository layout
+
+```
+cmd/tracecheck/        CLI that verifies an NDJSON trace (used by the e2e scripts and CI-friendly)
+internal/testtracer/   the PBS module package — copied verbatim to <pbs>/modules/test_provider/test_tracer at build time
+internal/tracecheck/   verification library behind cmd/tracecheck
+docs/                  assessment text, analysis, specification, design, test plan, runbook
+scripts/               install-module.sh, e2e-live.sh (local PBS checkout), e2e-docker.sh (image)
+Dockerfile             multi-stage: clone PBS @ PBS_REF, inject module, go generate, test, build; runtime with pbs.yaml baked in
+pbs.yaml, 01-bid-request-example.json, 02-send-bid-request.sh   assessment inputs, unchanged
+```
+
+The module package has no dependency on anything else in this repository, which is what lets it be dropped into the upstream
+`modules/` tree unchanged; `go.mod` pins `github.com/prebid/prebid-server/v4` to the same commit the Docker image builds, so
+`go test ./...` and `golangci-lint` run here without a PBS checkout.
+
+## Development
+
+```bash
+make test        # go test ./... -race
+make lint        # golangci-lint run (config: .golangci.yml)
+make fmt         # gofumpt + golines
+make cover       # coverage of internal/testtracer
+make e2e         # live e2e against PBS_DIR=~/Dev/prebid-server
+make docker-e2e  # live e2e against the Docker image
+```
+
+CI (`.github/workflows/ci.yml`): lint, race tests, coverage, govulncheck (advisory), Docker image build with a `/status` smoke test.
+
+## Rules
+
+Hardcoded in [internal/testtracer/rules.go](internal/testtracer/rules.go). The sample request resolves to
+`Account.ID = 664-025-677-881` (`site.publisher.ext.prebid.parentAccount`), which is the first rule.
+
+## Known behaviour with live bidders
+
+With the sample request all four bidders currently answer HTTP 204 (verified 2026-09-16, also by calling appnexus directly).
+Prebid Server then does not invoke `raw_bidder_response`, so item 3 is empty in live traces; it is covered by unit and
+integration tests, and `STRICT_BIDS=1` turns an empty item 3 into an e2e failure on networks where appnexus test mode bids.
+Details: [docs/01-analysis.md](docs/01-analysis.md) §2.3.

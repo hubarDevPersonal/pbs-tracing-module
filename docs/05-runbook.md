@@ -9,12 +9,22 @@
 | `curl`, `python3` or `jq` | any | for sending and inspecting |
 | Free ports | 8080 (PBS), 6060 (PBS admin) | |
 
+## 1a. Quickest path: Docker
+
+```bash
+make docker-build                       # PBS @ pinned commit + module; module tests run inside the build
+docker run --rm -p 8080:8080 pbs-tracer:local 2>pbs.log | tee trace.ndjson
+sh 02-send-bid-request.sh               # in another terminal; repeat > TracePacketsAmount times
+```
+
+Each traced auction appears as one JSON line on the container's stdout. `make docker-e2e` does all of this and verifies the result with `cmd/tracecheck`.
+
 ## 2. Install the module into a PBS checkout
 
 ```bash
 export PBS_DIR=$HOME/Dev/prebid-server        # your checkout
-cp -R modules/test_provider "$PBS_DIR/modules/"
-cd "$PBS_DIR" && go generate ./modules/... && go vet ./modules/test_provider/... && go build -o prebid-server .
+scripts/install-module.sh                     # copies internal/testtracer → modules/test_provider/test_tracer, go generate
+cd "$PBS_DIR" && go vet ./modules/test_provider/... && go build -o prebid-server .
 ```
 
 `go generate` rewrites `modules/builder.go`; verify it now contains `"test_provider": {"test_tracer": ...}`.
@@ -31,11 +41,7 @@ cd "$PBS_DIR" && ./prebid-server -stderrthreshold=INFO 2>pbs.log 1>trace.ndjson
 
 stdout carries **only** the trace lines; PBS's own logging goes to stderr.
 
-Docker alternative (image built from the PBS `Dockerfile`):
-
-```bash
-cd "$PBS_DIR" && docker build -t pbs-tracer . && docker run --rm -p 8080:8080 -v "$PWD/pbs.yaml:/usr/local/bin/pbs.yaml:ro" pbs-tracer 2>pbs.log 1>trace.ndjson
-```
+For Docker see §1a; the image already contains `pbs.yaml`.
 
 ## 4. Send the sample request
 
@@ -55,7 +61,7 @@ PBS then does not invoke `raw_bidder_response`, so `bidder_responses` is `[]` an
 behaviour, not a module defect; items 1, 2 and 4 are still produced. Item 3 is proven by the unit and integration tests and shows up
 in e2e as soon as any bidder actually bids (e.g., from a network where appnexus test mode returns a creative).
 
-Automated live run: `PBS_DIR=... e2e/run.sh` (add `STRICT_BIDS=1` to require at least one live bidder response).
+Automated live run: `make e2e` (`PBS_DIR=... scripts/e2e-live.sh`; add `STRICT_BIDS=1` to require at least one live bidder response).
 
 ## 6. Verifying hook execution from the HTTP response
 
@@ -67,7 +73,7 @@ for `test_provider.test_tracer`; each invocation should show `"status": "success
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `pbs.log`: `Not found hook while building hook execution plan: test_provider.test_tracer …` on every request | module not compiled in (`builder.go` not regenerated) or `hooks.modules.test_provider.test_tracer.enabled` false | rerun `go generate ./modules/...`, rebuild, check config |
-| PBS exits with `failed to init "test_provider.test_tracer" module: …` | hardcoded rules failed validation | fix `rules.go` (empty PartnerID, non-positive Duration/amount, duplicate PartnerID) |
+| PBS exits with `failed to init "test_provider.test_tracer" module: …` | hardcoded rules failed validation | fix `internal/testtracer/rules.go` (empty PartnerID, non-positive Duration/amount, duplicate PartnerID) |
 | No trace line although account matches | partner already stopped (amount/duration) or process restarted mid-window | restart PBS to reset state; check `Duration` in `rules.go` |
 | Trace printed but `bidder_responses: []` | bidders returned 204/error → PBS skipped `raw_bidder_response` | expected with live no-bid; see §5 |
 | stdout mixed with logs | logs not redirected | run with `2>pbs.log` |

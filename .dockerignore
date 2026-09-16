@@ -1,0 +1,11 @@
+.git
+.github
+docs
+scripts
+cmd
+internal/tracecheck
+*.md
+*.log
+trace.ndjson
+prebid-server
+bin
