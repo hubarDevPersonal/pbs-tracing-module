@@ -1,0 +1,8 @@
+services:
+  pbs:
+    build: .
+    image: pbs-tracer:local
+    ports:
+      - "8080:8080"
+      - "6060:6060"
+    # trace packets: docker compose logs --no-log-prefix pbs 2>/dev/null

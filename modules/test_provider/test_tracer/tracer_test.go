@@ -195,7 +195,7 @@ func TestAuctionTrace_PacketContainsAllSections(t *testing.T) {
 	require.Len(t, p.BidderRequests, 1)
 	assert.Equal(t, "appnexus", p.BidderRequests[0].Bidder)
 	assert.True(t, p.BidderRequests[0].Timestamp.Equal(ts(2)))
-	assert.JSONEq(t, `{"id":"auction-1","test":1}`, string(p.BidderRequests[0].Request))
+	assert.JSONEq(t, `{"id":"auction-1","imp":null,"test":1}`, string(p.BidderRequests[0].Request))
 
 	require.Len(t, p.BidderResponses, 1)
 	assert.Equal(t, "appnexus", p.BidderResponses[0].Bidder)

@@ -15,7 +15,7 @@ PBS_DIR="${PBS_DIR:?set PBS_DIR to a prebid-server checkout}"
 REQUESTS="${REQUESTS:-5}"
 EXPECT_PACKETS="${EXPECT_PACKETS:-3}"   # TracePacketsAmount of the sample partner in rules.go
 STRICT_BIDS="${STRICT_BIDS:-0}"         # 1 → fail when no live bidder returned a response (item 3)
-WORK="${WORK:-$(mktemp -d "${TMPDIR:-/tmp}/pbs-e2e.XXXXXX")}"
+WORK="${WORK:-$(mktemp -d "${TMPDIR:-/tmp}/pbs-e2e.XXXXXX")}"; mkdir -p "$WORK"
 TRACE="$WORK/trace.ndjson"; PBS_LOG="$WORK/pbs.log"
 
 log()  { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }

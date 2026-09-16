@@ -1,6 +1,9 @@
 package testtracer
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Rule is one hardcoded tracing rule (assessment: "Tracing Parameters").
 //
@@ -23,6 +26,21 @@ var defaultRules = []Rule{
 // validateRules enforces FR-02: non-empty PartnerID, positive Duration and TracePacketsAmount,
 // unique PartnerID. An empty rule set is valid.
 func validateRules(rules []Rule) error {
-	// TODO(impl)
+	seen := make(map[string]struct{}, len(rules))
+	for i, r := range rules {
+		if r.PartnerID == "" {
+			return fmt.Errorf("rule #%d: PartnerID must not be empty", i)
+		}
+		if r.Duration <= 0 {
+			return fmt.Errorf("rule #%d (%s): Duration must be positive, got %s", i, r.PartnerID, r.Duration)
+		}
+		if r.TracePacketsAmount <= 0 {
+			return fmt.Errorf("rule #%d (%s): TracePacketsAmount must be positive, got %d", i, r.PartnerID, r.TracePacketsAmount)
+		}
+		if _, dup := seen[r.PartnerID]; dup {
+			return fmt.Errorf("rule #%d: duplicate PartnerID %q", i, r.PartnerID)
+		}
+		seen[r.PartnerID] = struct{}{}
+	}
 	return nil
 }

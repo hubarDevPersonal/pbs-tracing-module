@@ -11,7 +11,7 @@ Test code lives in `modules/test_provider/test_tracer/*_test.go` (same package, 
 | L1 Unit | `rules_test.go`, `tracer_test.go`, `output_test.go`, `module_test.go` | Rule validation, stop conditions with a fake clock, snapshot semantics, JSON contract, each hook in isolation | `go test ./modules/test_provider/test_tracer/` |
 | L2 Race | `race_test.go` (`TestRace*`) | Slot reservation under contention, concurrent bidder hooks on one trace, non-interleaved output | `go test -race -run '^TestRace' -count 3` |
 | L3 Integration (in-process) | `integration_test.go` | The module driven by the real `hookexecution` executor and plan builder built from the provided `pbs.yaml` stage list; module-context propagation across stages; outcomes have no errors | `go test -run Integration` |
-| L4 End-to-end | `e2e/` | PBS binary with the module registered, the provided `pbs.yaml` and sample request unchanged, **live bidders**; asserts NDJSON on stdout, hook outcomes in the HTTP response and absence of `Not found hook` warnings | `PBS_DIR=... e2e/run.sh` |
+| L4 End-to-end | `e2e/` | PBS with the module registered, the provided `pbs.yaml` and `02-send-bid-request.sh` unchanged, **live bidders**; asserts NDJSON on stdout, hook outcomes in the HTTP response and absence of `Not found hook` warnings. Two drivers: local checkout (`run.sh`) and Docker image (`run-docker.sh`) | `PBS_DIR=... e2e/run.sh` / `make docker-e2e` |
 | L5 Manual | [05-runbook.md](05-runbook.md) | Reviewer walkthrough with the provided `02-send-bid-request.sh` | shell |
 
 Exit criteria for the implementation phase: L1–L3 green with `-race`, `go vet` clean, L4 green on a machine with Go and the PBS checkout,
@@ -40,17 +40,19 @@ coverage ≥ 90 % statements for **each implemented hook** (official Go module g
 | NFR-04 | `go vet`, `gofmt -l` in `e2e/run.sh` and CI |
 | NFR-05 | all L1 tests use `fakeClock` and `bytes.Buffer`/`syncBuffer` |
 
-## 2.1 Status of the suite in this phase (2026-09-16)
+## 2.1 Status of the suite (2026-09-16)
 
-Compiled and executed inside a PBS master checkout (`go vet` clean, `gofmt` clean):
+Executed inside a PBS master checkout and inside the Docker build stage (`go vet` clean, `gofmt` clean):
 
 | Metric | Value |
 |--------|-------|
-| Top-level tests | 52 |
-| Red (fail on the stub API, as intended) | 41 |
-| Green on stubs | 11 — all negative-path tests (no rule → no trace, no output, no mutation, nil safety) that a pass-through stub satisfies trivially |
-| Panics | 0 — every test fails through assertions, so the whole suite always reports |
-| `go test -race -run '^TestRace'` | compiles and runs (red) |
+| Top-level tests | 58 (63 incl. subtests) |
+| Result | all green, also under `-race` (full suite and `-run '^TestRace' -count 3`) |
+| Statement coverage, package | 91.3 % |
+| Coverage per hook | entrypoint 100 %, processed_auction_request 95 %, bidder_request 91.7 %, raw_bidder_response 91.7 %, all_processed_bid_responses 100 %, auction_response 88.9 %, exitpoint 86.7 % |
+
+The two hooks below 90 % miss only the defensive `warnf` branch taken when marshalling an `*openrtb2.BidResponse` fails, which
+cannot be triggered with the real type. Kept for robustness (FR-15 AC2) rather than removed to game the metric.
 
 ## 3. Test data
 

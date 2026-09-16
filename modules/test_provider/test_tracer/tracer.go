@@ -1,6 +1,10 @@
 package testtracer
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -41,21 +45,81 @@ type PartnerStatus struct {
 
 // newTracer validates the rules and returns a Tracer using the given clock.
 func newTracer(rules []Rule, now func() time.Time) (*Tracer, error) {
-	// TODO(impl)
-	return &Tracer{now: now}, nil
+	if err := validateRules(rules); err != nil {
+		return nil, err
+	}
+	if now == nil {
+		now = time.Now
+	}
+	t := &Tracer{
+		rules:    make(map[string]Rule, len(rules)),
+		partners: make(map[string]*partnerState, len(rules)),
+		now:      now,
+	}
+	for _, r := range rules {
+		t.rules[r.PartnerID] = r
+	}
+	return t, nil
 }
 
 // Begin decides whether a new auction for partnerID must be traced. On success it reserves a
 // packet slot (D11) and returns the per-request collector. ok == false means "do not trace".
+//
+// The check-and-reserve sequence runs under one lock so that concurrent requests can never start
+// more than TracePacketsAmount traces (FR-10 AC2).
 func (t *Tracer) Begin(partnerID, auctionID string) (*AuctionTrace, bool) {
-	// TODO(impl)
-	return nil, false
+	rule, ok := t.rules[partnerID]
+	if !ok {
+		return nil, false
+	}
+	now := t.now()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	st := t.partners[partnerID]
+	if st == nil {
+		st = &partnerState{}
+		t.partners[partnerID] = st
+	}
+	if st.stopReason != StopReasonNone {
+		return nil, false
+	}
+	if st.packets == 0 {
+		st.firstTracedAt = now
+	} else if now.Sub(st.firstTracedAt) > rule.Duration { // FR-09: strictly "exceeds"
+		st.stopReason = StopReasonDuration
+		return nil, false
+	}
+	if st.packets >= rule.TracePacketsAmount { // defensive; unreachable because of the mark below
+		st.stopReason = StopReasonAmount
+		return nil, false
+	}
+	st.packets++
+	if st.packets >= rule.TracePacketsAmount { // FR-10: the last slot has been taken
+		st.stopReason = StopReasonAmount
+	}
+
+	return &AuctionTrace{
+		partnerID:       partnerID,
+		rule:            rule,
+		packetIndex:     st.packets,
+		auctionID:       auctionID,
+		startedAt:       now.UTC(),
+		bidderRequests:  make([]BidderRequestPacket, 0, 4),
+		bidderResponses: make([]BidderResponsePacket, 0, 4),
+	}, true
 }
 
 // Status returns the partner state; found == false when the partner has never matched a rule.
 func (t *Tracer) Status(partnerID string) (status PartnerStatus, found bool) {
-	// TODO(impl)
-	return PartnerStatus{}, false
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st, ok := t.partners[partnerID]
+	if !ok {
+		return PartnerStatus{}, false
+	}
+	return PartnerStatus{Packets: st.packets, FirstTracedAt: st.firstTracedAt, StopReason: st.stopReason}, true
 }
 
 // AuctionTrace collects the four kinds of trace data for one auction. It is shared between the
@@ -85,30 +149,168 @@ func (a *AuctionTrace) AuctionID() string { return a.auctionID }
 func (a *AuctionTrace) PacketIndex() int { return a.packetIndex }
 
 // SetIncomingRequest stores a copy of the raw incoming body and its timestamp (FR-04).
+// A body that is not valid JSON is embedded as a JSON string so the packet stays well-formed.
 func (a *AuctionTrace) SetIncomingRequest(at time.Time, body []byte) {
-	// TODO(impl)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.incoming = &RequestPacket{Timestamp: at.UTC(), Body: rawJSON(bytes.Clone(body))}
+}
+
+func (a *AuctionTrace) hasIncomingRequest() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.incoming != nil
 }
 
 // AddBidderRequest appends a snapshot of the request sent to bidder (FR-05).
 func (a *AuctionTrace) AddBidderRequest(at time.Time, bidder string, req *openrtb2.BidRequest) error {
-	// TODO(impl)
+	if req == nil {
+		return errors.New("bidder request is nil")
+	}
+	raw, err := json.Marshal(req) // outside the lock (design §5)
+	if err != nil {
+		return fmt.Errorf("marshal bidder request for %q: %w", bidder, err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.bidderRequests = append(a.bidderRequests, BidderRequestPacket{Timestamp: at.UTC(), Bidder: bidder, Request: raw})
 	return nil
 }
 
 // AddBidderResponse appends a snapshot of the response received from bidder (FR-06).
 func (a *AuctionTrace) AddBidderResponse(at time.Time, bidder string, resp *adapters.BidderResponse) error {
-	// TODO(impl)
+	if resp == nil {
+		return errors.New("bidder response is nil")
+	}
+	view, err := snapshotBidderResponse(resp)
+	if err != nil {
+		return fmt.Errorf("snapshot bidder response for %q: %w", bidder, err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.bidderResponses = append(a.bidderResponses, BidderResponsePacket{Timestamp: at.UTC(), Bidder: bidder, Response: view})
 	return nil
 }
 
 // SetFinalResponse stores a snapshot of the response returned to the client (FR-07).
 func (a *AuctionTrace) SetFinalResponse(at time.Time, resp *openrtb2.BidResponse) error {
-	// TODO(impl)
+	if resp == nil {
+		return errors.New("final response is nil")
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		return fmt.Errorf("marshal final response: %w", err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.final = &ResponsePacket{Timestamp: at.UTC(), Body: raw}
 	return nil
+}
+
+// tryMarkEmitted flips the emitted flag; it returns true only for the first caller (FR-08 AC3).
+func (a *AuctionTrace) tryMarkEmitted() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.emitted {
+		return false
+	}
+	a.emitted = true
+	return true
 }
 
 // Packet builds the output object. It never returns nil slices (FR-08 / spec §5).
 func (a *AuctionTrace) Packet(completedAt time.Time) TracePacket {
-	// TODO(impl)
-	return TracePacket{}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	reqs := make([]BidderRequestPacket, len(a.bidderRequests))
+	copy(reqs, a.bidderRequests)
+	resps := make([]BidderResponsePacket, len(a.bidderResponses))
+	copy(resps, a.bidderResponses)
+
+	return TracePacket{
+		Module:    ModuleCode,
+		PartnerID: a.partnerID,
+		Rule: RuleView{
+			PartnerID:          a.rule.PartnerID,
+			Duration:           a.rule.Duration.String(),
+			TracePacketsAmount: a.rule.TracePacketsAmount,
+		},
+		PacketIndex:     a.packetIndex,
+		AuctionID:       a.auctionID,
+		StartedAt:       a.startedAt.UTC(),
+		CompletedAt:     completedAt.UTC(),
+		IncomingRequest: a.incoming,
+		BidderRequests:  reqs,
+		BidderResponses: resps,
+		FinalResponse:   a.final,
+	}
+}
+
+// snapshotBidderResponse converts adapters.BidderResponse into the explicit DTO (D10) and deep-copies
+// it through a marshal/unmarshal round trip so later mutations by the exchange are not observed.
+func snapshotBidderResponse(resp *adapters.BidderResponse) (BidderResponseView, error) {
+	view := BidderResponseView{Currency: resp.Currency, Bids: make([]TypedBidView, 0, len(resp.Bids))}
+	for _, tb := range resp.Bids {
+		if tb == nil {
+			continue
+		}
+		v := TypedBidView{
+			Bid:          tb.Bid,
+			BidType:      string(tb.BidType),
+			DealPriority: tb.DealPriority,
+			Seat:         string(tb.Seat),
+		}
+		if tb.BidMeta != nil {
+			raw, err := json.Marshal(tb.BidMeta)
+			if err != nil {
+				return BidderResponseView{}, fmt.Errorf("marshal bid meta: %w", err)
+			}
+			v.BidMeta = raw
+		}
+		if tb.BidVideo != nil {
+			raw, err := json.Marshal(tb.BidVideo)
+			if err != nil {
+				return BidderResponseView{}, fmt.Errorf("marshal bid video: %w", err)
+			}
+			v.BidVideo = raw
+		}
+		view.Bids = append(view.Bids, v)
+	}
+	if len(resp.FledgeAuctionConfigs) > 0 {
+		raw, err := json.Marshal(resp.FledgeAuctionConfigs)
+		if err != nil {
+			return BidderResponseView{}, fmt.Errorf("marshal fledge auction configs: %w", err)
+		}
+		view.FledgeAuctionConfigs = raw
+	}
+
+	// deep copy: detach from the pointers owned by the exchange
+	raw, err := json.Marshal(view)
+	if err != nil {
+		return BidderResponseView{}, err
+	}
+	var detached BidderResponseView
+	if err := json.Unmarshal(raw, &detached); err != nil {
+		return BidderResponseView{}, err
+	}
+	if detached.Bids == nil {
+		detached.Bids = []TypedBidView{}
+	}
+	return detached, nil
+}
+
+// rawJSON returns body as an embedded JSON value; non-JSON bodies are wrapped into a JSON string.
+func rawJSON(body []byte) json.RawMessage {
+	if len(body) == 0 {
+		return json.RawMessage("null")
+	}
+	if json.Valid(body) {
+		return json.RawMessage(body)
+	}
+	quoted, err := json.Marshal(string(body))
+	if err != nil {
+		return json.RawMessage("null")
+	}
+	return quoted
 }

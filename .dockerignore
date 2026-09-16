@@ -1,0 +1,7 @@
+.git
+docs
+e2e
+*.md
+*.log
+trace.ndjson
+prebid-server

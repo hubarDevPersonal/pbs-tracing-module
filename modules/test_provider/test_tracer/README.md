@@ -67,6 +67,11 @@ The module reads no module-level or account-level configuration.
 
 The module never rejects requests and never mutates payloads.
 
+## Building
+
+From the assessment repository root: `make docker-build` (PBS at the pinned commit + this module), or copy this directory into
+`<pbs>/modules/test_provider/test_tracer`, run `go generate ./modules/...` and build PBS as usual.
+
 ## Running the tests
 
 ```bash

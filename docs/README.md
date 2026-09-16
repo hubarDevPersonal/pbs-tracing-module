@@ -15,8 +15,9 @@ Code artefacts produced in this phase:
 
 | Path | Content |
 |------|---------|
-| [../modules/test_provider/test_tracer/](../modules/test_provider/test_tracer/) | Drop-in module package for the Prebid Server tree: API skeleton (`module.go`, `rules.go`, `tracer.go`, `output.go`), module README, and the preliminary test suite (red phase of TDD). |
-| [../e2e/](../e2e/) | End-to-end driver script: builds PBS with the module, runs it with the provided `pbs.yaml` against live bidders, asserts the NDJSON trace. |
+| [../modules/test_provider/test_tracer/](../modules/test_provider/test_tracer/) | Drop-in module package for the Prebid Server tree: implementation (`module.go`, `rules.go`, `tracer.go`, `output.go`), module README, and the test suite (58 tests, race-clean, 91 % coverage). |
+| [../Dockerfile](../Dockerfile), [../Makefile](../Makefile), [../docker-compose.yml](../docker-compose.yml) | Build PBS (pinned commit) with the module compiled in and the assessment's `pbs.yaml` baked in; `make docker-e2e` runs the full check. |
+| [../e2e/](../e2e/) | End-to-end driver scripts (local checkout and Docker): builds PBS with the module, runs it with the provided `pbs.yaml` against live bidders, asserts the NDJSON trace. |
 
 Conventions used throughout:
 

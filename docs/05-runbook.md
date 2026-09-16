@@ -9,6 +9,16 @@
 | `curl`, `python3` or `jq` | any | for sending and inspecting |
 | Free ports | 8080 (PBS), 6060 (PBS admin) | |
 
+## 1a. Quickest path: Docker
+
+```bash
+make docker-build                       # builds PBS @ pinned commit + module; runs the module tests inside the build
+docker run --rm -p 8080:8080 pbs-tracer:local 2>pbs.log | tee trace.ndjson
+sh 02-send-bid-request.sh               # in another terminal; repeat > TracePacketsAmount times
+```
+
+Each traced auction appears as one JSON line on the container's stdout. `make docker-e2e` does all of this and asserts the result.
+
 ## 2. Install the module into a PBS checkout
 
 ```bash
@@ -31,11 +41,7 @@ cd "$PBS_DIR" && ./prebid-server -stderrthreshold=INFO 2>pbs.log 1>trace.ndjson
 
 stdout carries **only** the trace lines; PBS's own logging goes to stderr.
 
-Docker alternative (image built from the PBS `Dockerfile`):
-
-```bash
-cd "$PBS_DIR" && docker build -t pbs-tracer . && docker run --rm -p 8080:8080 -v "$PWD/pbs.yaml:/usr/local/bin/pbs.yaml:ro" pbs-tracer 2>pbs.log 1>trace.ndjson
-```
+For Docker see §1a; the image already contains `pbs.yaml`.
 
 ## 4. Send the sample request
 

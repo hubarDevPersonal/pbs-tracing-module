@@ -2,6 +2,7 @@ package testtracer
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -91,7 +92,46 @@ func newJSONEmitter(w io.Writer) *jsonEmitter {
 }
 
 // Emit marshals packet, appends '\n' and writes it atomically with respect to other Emit calls.
+// All timestamps are normalised to UTC (FR-08 AC5).
 func (e *jsonEmitter) Emit(packet TracePacket) error {
-	// TODO(impl)
+	raw, err := json.Marshal(packet.utc())
+	if err != nil {
+		return fmt.Errorf("%s: marshal trace packet: %w", ModuleCode, err)
+	}
+	raw = append(raw, '\n')
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, err := e.w.Write(raw); err != nil {
+		return fmt.Errorf("%s: write trace packet: %w", ModuleCode, err)
+	}
 	return nil
+}
+
+// utc returns a copy of the packet with every timestamp converted to UTC.
+func (p TracePacket) utc() TracePacket {
+	out := p
+	out.StartedAt = p.StartedAt.UTC()
+	out.CompletedAt = p.CompletedAt.UTC()
+	if p.IncomingRequest != nil {
+		c := *p.IncomingRequest
+		c.Timestamp = c.Timestamp.UTC()
+		out.IncomingRequest = &c
+	}
+	if p.FinalResponse != nil {
+		c := *p.FinalResponse
+		c.Timestamp = c.Timestamp.UTC()
+		out.FinalResponse = &c
+	}
+	out.BidderRequests = make([]BidderRequestPacket, len(p.BidderRequests))
+	for i, b := range p.BidderRequests {
+		b.Timestamp = b.Timestamp.UTC()
+		out.BidderRequests[i] = b
+	}
+	out.BidderResponses = make([]BidderResponsePacket, len(p.BidderResponses))
+	for i, b := range p.BidderResponses {
+		b.Timestamp = b.Timestamp.UTC()
+		out.BidderResponses[i] = b
+	}
+	return out
 }

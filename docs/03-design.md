@@ -84,8 +84,8 @@ func Builder(_ json.RawMessage, _ moduledeps.ModuleDeps) (interface{}, error)   
 func newModule(rules []Rule, emitter Emitter, now func() time.Time) (*Module, error)
 ```
 
-Snapshots: `AddBidderRequest`/`AddBidderResponse`/`SetFinalResponse` marshal **at hook time** using `util/jsonutil` (jsoniter, PBS's
-standard) and store `json.RawMessage`. The exchange keeps mutating request/response objects after the hook returns, so storing pointers
+Snapshots: `AddBidderRequest`/`AddBidderResponse`/`SetFinalResponse` marshal **at hook time** with the standard `encoding/json`
+(output is identical to PBS's jsoniter for these types and has no dependency on the `RawMessageExtension` registered in `main`) and store `json.RawMessage`. The exchange keeps mutating request/response objects after the hook returns, so storing pointers
 would produce non-deterministic traces. `SetIncomingRequest` copies the byte slice for the same reason.
 
 ### 2.1 Note on the `ModuleContext` API
@@ -193,7 +193,15 @@ No account-level configuration is read (`miCtx.AccountConfig` ignored).
 - No allocation for non-traced requests beyond the executor's own `HookResult`.
 - Trace memory is released at `exitpoint` by clearing the context key; the `ModuleContext` itself is owned by the executor and dies with the request.
 
-## 10. Alternatives considered
+## 10. Packaging (Docker)
+
+`Dockerfile` at the repository root builds upstream PBS at a pinned commit (`PBS_REF`, default `f660bedc`) with the module copied
+into `modules/test_provider`, regenerates `modules/builder.go`, runs `gofmt`/`go vet`/the module tests inside the build stage, and
+produces a release image derived from the upstream `Dockerfile` (ubuntu:22.04, non-root user, `static/` and `stored_requests/data`).
+The assessment's `pbs.yaml` is copied unchanged next to the binary, so `docker run -p 8080:8080 pbs-tracer:local` is the whole runbook.
+stdout of the container carries only trace packets; PBS logs go to stderr (`docker logs c 2>/dev/null` isolates the trace).
+
+## 11. Alternatives considered
 
 - **Trigger at `entrypoint` by parsing the body for the account id**: rejected (D5) — duplicates PBS resolution rules (app/site/dooh, parentAccount, stored requests).
 - **Print at `auction_response` instead of `exitpoint`**: rejected (D7) — `exitpoint` is closer to the wire and both stages always run together.
