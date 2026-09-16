@@ -75,7 +75,7 @@ jobs:
           tags: pbs-tracer:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Smoke: container starts and serves /status
+      - name: "Smoke: container starts and serves /status"
         run: |
           docker run -d --name pbs -p 8080:8080 pbs-tracer:ci
           for i in $(seq 1 60); do curl -sf http://localhost:8080/status && break; sleep 1; done
