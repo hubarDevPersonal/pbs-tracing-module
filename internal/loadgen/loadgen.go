@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -23,9 +24,18 @@ type Config struct {
 	Headers     map[string]string
 	RPS         float64       // target request rate (open loop, bounded by Concurrency)
 	Duration    time.Duration // how long to schedule requests
-	Concurrency int           // max in-flight requests
+	Concurrency int           // max in-flight requests (goroutines parked on I/O; unrelated to GOMAXPROCS)
 	Timeout     time.Duration // per-request timeout
+	// MaxResponseBytes bounds the bytes buffered per response; a larger response counts as an error.
+	// 0 selects DefaultMaxResponseBytes.
+	MaxResponseBytes int64
 }
+
+// DefaultMaxResponseBytes is the response size cap used when Config.MaxResponseBytes is 0.
+const DefaultMaxResponseBytes = 4 << 20
+
+// ErrResponseTooLarge is returned (as a per-request error) when a response exceeds MaxResponseBytes.
+var ErrResponseTooLarge = errors.New("response exceeds the configured size limit")
 
 // Report is the outcome of a run.
 type Report struct {
@@ -96,10 +106,15 @@ func Run(ctx context.Context, cfg Config, client *http.Client) (Report, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 10 * time.Second
 	}
+	if cfg.MaxResponseBytes <= 0 {
+		cfg.MaxResponseBytes = DefaultMaxResponseBytes
+	}
 	if client == nil {
 		client = http.DefaultClient
 	}
 
+	// Both channels are allocated once per run (a chan of zero-size elements carries no payload), so
+	// they add no GC pressure; per-request allocations are the HTTP request/response themselves.
 	ticks := make(chan struct{})
 	samples := make(chan sample, 1024)
 	var wg sync.WaitGroup
@@ -108,24 +123,26 @@ func Run(ctx context.Context, cfg Config, client *http.Client) (Report, error) {
 		go func() {
 			defer wg.Done()
 			for range ticks {
-				samples <- do(ctx, cfg, client)
+				// Requests derive from ctx, not from the scheduling context: a request in flight when the
+				// scheduling window closes is allowed to finish and be counted.
+				samples <- sendRequest(ctx, cfg, client)
 			}
 		}()
 	}
 
+	// The scheduling window is a context so cancellation and the duration share one mechanism.
+	schedCtx, cancelSched := context.WithTimeout(ctx, cfg.Duration)
+	defer cancelSched()
+
 	start := time.Now()
 	go func() {
+		defer close(ticks)
 		interval := time.Duration(float64(time.Second) / cfg.RPS)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		deadline := time.After(cfg.Duration)
 		for {
 			select {
-			case <-ctx.Done():
-				close(ticks)
-				return
-			case <-deadline:
-				close(ticks)
+			case <-schedCtx.Done():
 				return
 			case <-ticker.C:
 				select {
@@ -169,7 +186,8 @@ func Run(ctx context.Context, cfg Config, client *http.Client) (Report, error) {
 	return report, nil
 }
 
-func do(ctx context.Context, cfg Config, client *http.Client) sample {
+// sendRequest performs one request with its own timeout and returns the measured sample.
+func sendRequest(ctx context.Context, cfg Config, client *http.Client) sample {
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, cfg.URL, bytes.NewReader(cfg.Body))
@@ -186,12 +204,42 @@ func do(ctx context.Context, cfg Config, client *http.Client) sample {
 		return sample{err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
+	body, err := readBounded(resp.Body, cfg.MaxResponseBytes)
 	latency := time.Since(t0)
 	if err != nil {
 		return sample{err: err}
 	}
 	return sample{latency: latency, status: resp.StatusCode, bytes: int64(len(body)), bids: hasBids(body)}
+}
+
+// readBounded reads at most limit bytes; one byte more is read to detect (and reject) larger inputs.
+func readBounded(r io.Reader, limit int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("%w (%d bytes)", ErrResponseTooLarge, limit)
+	}
+	return body, nil
+}
+
+// ReadBodyFile loads a request body from disk, refusing files larger than limit bytes
+// (Prebid Server rejects bodies above max_request_size anyway).
+func ReadBodyFile(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path) //nolint:gosec // path is an operator-supplied CLI argument
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	body, err := readBounded(f, limit)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("read %s: empty body", path)
+	}
+	return body, nil
 }
 
 func hasBids(body []byte) bool {

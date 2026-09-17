@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -59,6 +61,56 @@ func TestRun_TransportErrorsAreCounted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Positive(t, rep.Requests)
 	assert.Equal(t, rep.Requests, rep.Errors)
+}
+
+func TestRun_ResponseAboveLimitIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, 2048))
+	}))
+	defer srv.Close()
+
+	rep, err := Run(
+		context.Background(),
+		Config{URL: srv.URL, Body: []byte(`{}`), RPS: 20, Duration: 200 * time.Millisecond, Concurrency: 2, Timeout: time.Second, MaxResponseBytes: 1024},
+		srv.Client(),
+	)
+	require.NoError(t, err)
+	assert.Positive(t, rep.Requests)
+	assert.Equal(t, rep.Requests, rep.Errors, "every oversized response must be counted as an error")
+}
+
+func TestRun_CancellationStopsSchedulingAndReports(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	rep, err := Run(ctx, Config{URL: srv.URL, Body: []byte(`{}`), RPS: 50, Duration: 10 * time.Second, Concurrency: 4, Timeout: time.Second}, srv.Client())
+	require.NoError(t, err)
+	assert.Less(t, time.Since(start), 2*time.Second, "run must end with the context, not with Duration")
+	assert.Positive(t, rep.Requests)
+}
+
+func TestReadBodyFile(t *testing.T) {
+	dir := t.TempDir()
+	small := filepath.Join(dir, "small.json")
+	require.NoError(t, os.WriteFile(small, []byte(`{"id":"x"}`), 0o600))
+	big := filepath.Join(dir, "big.json")
+	require.NoError(t, os.WriteFile(big, make([]byte, 300), 0o600))
+	empty := filepath.Join(dir, "empty.json")
+	require.NoError(t, os.WriteFile(empty, nil, 0o600))
+
+	body, err := ReadBodyFile(small, 256)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"id":"x"}`, string(body))
+
+	_, err = ReadBodyFile(big, 256)
+	assert.ErrorIs(t, err, ErrResponseTooLarge)
+	_, err = ReadBodyFile(empty, 256)
+	assert.ErrorContains(t, err, "empty body")
+	_, err = ReadBodyFile(filepath.Join(dir, "missing.json"), 256)
+	assert.Error(t, err)
 }
 
 func TestRun_RejectsInvalidConfig(t *testing.T) {

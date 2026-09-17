@@ -1,58 +1,77 @@
 // Command loadgen sends the assessment's sample BidRequest to a Prebid Server at a fixed rate and
 // prints latency percentiles. Used by scripts/perf-docker.sh; keep the rate modest against live bidders.
 //
-//	loadgen -url http://localhost:8080/openrtb2/auction -body 01-bid-request-example.json -rps 5 -duration 30s
+//	loadgen [-url …] [-body file] [-rps 5] [-duration 30s] [-concurrency 16] [-timeout 10s] [-out report.json]
+//
+// Every flag can also be set through the environment as LOADGEN_<FLAG> (flags win). See config.go for
+// the defaults and the reasoning behind them.
 package main
 
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
-	"time"
+	"syscall"
 
 	"github.com/hubarDevPersonal/pbs-tracing-module/internal/loadgen"
 )
 
 func main() {
-	os.Exit(run())
+	os.Exit(run(os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr))
 }
 
-func run() int {
-	url := flag.String("url", "http://localhost:8080/openrtb2/auction", "auction endpoint")
-	bodyPath := flag.String("body", "01-bid-request-example.json", "request body file")
-	rps := flag.Float64("rps", 5, "target requests per second")
-	duration := flag.Duration("duration", 30*time.Second, "run duration")
-	concurrency := flag.Int("concurrency", 16, "max in-flight requests")
-	timeout := flag.Duration("timeout", 10*time.Second, "per-request timeout")
-	out := flag.String("out", "", "write the JSON report to this file")
-	flag.Parse()
-
-	body, err := os.ReadFile(*bodyPath)
+func run(args []string, lookupEnv func(string) (string, bool), stdout, stderr io.Writer) int {
+	cfg, err := parseConfig(args, lookupEnv, stderr)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "loadgen:", err)
+		_, _ = fmt.Fprintln(stderr, "loadgen:", err)
 		return 2
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	body, err := loadgen.ReadBodyFile(cfg.BodyPath, maxBodyBytes)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "loadgen:", err)
+		return 2
+	}
 
-	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: *concurrency, MaxConnsPerHost: *concurrency}}
+	// Root context of the run: SIGINT (operator) and SIGTERM (docker stop, CI cancel) end the run
+	// gracefully so the partial report is still printed; the hard deadline guards against a wedged
+	// server holding connections past Duration + Timeout.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, cfg.hardDeadline())
+	defer cancel()
+
+	client := &http.Client{Transport: &http.Transport{
+		MaxIdleConnsPerHost: cfg.Concurrency, // one warm connection per worker
+		MaxConnsPerHost:     cfg.Concurrency, // never exceed the worker count towards PBS
+	}}
 	report, err := loadgen.Run(ctx, loadgen.Config{
-		URL: *url, Body: body, RPS: *rps, Duration: *duration, Concurrency: *concurrency, Timeout: *timeout,
+		URL:              cfg.URL,
+		Body:             body,
+		RPS:              cfg.RPS,
+		Duration:         cfg.Duration,
+		Concurrency:      cfg.Concurrency,
+		Timeout:          cfg.Timeout,
+		MaxResponseBytes: maxResponseBytes,
 	}, client)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "loadgen:", err)
+		_, _ = fmt.Fprintln(stderr, "loadgen:", err)
 		return 2
 	}
-	fmt.Print(report.String())
-	if *out != "" {
-		raw, _ := json.MarshalIndent(report, "", "  ")
-		if err := os.WriteFile(*out, raw, 0o600); err != nil {
-			fmt.Fprintln(os.Stderr, "loadgen:", err)
+
+	_, _ = fmt.Fprint(stdout, report.String())
+	if cfg.Out != "" {
+		raw, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "loadgen:", err)
+			return 2
+		}
+		if err := os.WriteFile(cfg.Out, raw, 0o600); err != nil {
+			_, _ = fmt.Fprintln(stderr, "loadgen:", err)
 			return 2
 		}
 	}

@@ -100,6 +100,11 @@ and a `sync.Pool` for packet buffers.
 Produced by `make perf` (`scripts/perf-docker.sh`): tuned config, CoreDNS sidecar, `cmd/loadgen` at a modest rate against
 live bidders, 30 s CPU profile captured concurrently, Prometheus/CoreDNS counters diffed before/after.
 
+Why 5 rps × 30 s (defaults in `cmd/loadgen/config.go`): the harness drives live third-party bidders, so the rate is a courtesy
+limit (5 × 4 bidders ≈ 20 outbound req/s), not a capacity probe; 150 samples make p50/p90 stable while p99 is indicative only.
+Capacity testing of PBS itself belongs on stored bid responses or a mock bidder, where `-rps` can be raised freely;
+`-concurrency` must stay ≥ rps × worst-case latency to hold the rate, and is unrelated to `GOMAXPROCS` (workers park on I/O).
+
 Run of 2026-09-16 (`make perf`, `NO_BUILD=1`, Docker Desktop on Apple M-series, egress Portugal): 5 rps × 30 s, concurrency 16,
 150 requests, 4 live bidders each, 30 s CPU profile captured concurrently.
 
