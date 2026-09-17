@@ -147,11 +147,11 @@ func (m *Module) HandleProcessedAuctionHook(
 		}
 		mc.Set(ctxKeyEntrypoint, nil)
 	}
-	if !trace.hasIncomingRequest() { // FR-04 AC3
+	if !trace.hasIncomingRequest() { // FR-04 AC3: the processed request stands in, stamped with the trace start
 		if body, err := json.Marshal(payload.Request.BidRequest); err != nil {
 			warnf("auction %s: marshal processed request: %v", trace.AuctionID(), err)
 		} else {
-			trace.SetIncomingRequest(m.now(), body)
+			trace.SetIncomingRequest(trace.StartedAt(), body)
 		}
 	}
 	mc.Set(ctxKeyTrace, trace)

@@ -62,7 +62,7 @@ log "6/6 report → $WORK/perf-report.md"
   echo '## Load generator'; echo '```'; cat "$WORK/loadgen.txt"; echo '```'
   echo
   echo '## Connection reuse (prometheus, delta during the run)'
-  for m in prebid_server_adapter_connection_created prebid_server_adapter_connection_reused prebid_server_adapter_dns_lookup_time_count prebid_server_adapter_tls_handshake_time_count prebid_server_requests; do
+  for m in prebid_server_adapter_connection_created prebid_server_adapter_connection_reused prebid_server_dns_lookup_time_count prebid_server_tls_handshake_time_count prebid_server_requests; do
     b=$(metric "$WORK/metrics-before.txt" "$m"); a=$(metric "$WORK/metrics-after.txt" "$m")
     echo "- \`$m\`: $((a - b))"
   done

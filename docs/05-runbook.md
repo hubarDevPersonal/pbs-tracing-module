@@ -90,3 +90,6 @@ for `test_provider.test_tracer`; each invocation should show `"status": "success
 | `ext.errors.prebid`: `Error sending the request to Prebid Cache: Post "///cache"` | the sample asks for bid caching (`ext.prebid.cache`) and `pbs.yaml` configures no cache host | harmless for tracing; set `cache.host` or drop `ext.prebid.cache` |
 | stdout mixed with logs | logs not redirected | run with `2>pbs.log` |
 | Port 8080 busy | another PBS/service | `lsof -iTCP:8080 -sTCP:LISTEN` |
+| Partner stopped with fewer packets than `TracePacketsAmount` | an auction failed with 4xx/5xx after the trace started; PBS skips `exitpoint` on that path, the slot is consumed (analysis §5.6) | restart PBS to reset; check `pbs.log` for `Critical error while running the auction` |
+| PBS exits after a traced auction when stdout is a pipe | reader of the pipe exited → `EPIPE` on fd 1 terminates the process (analysis §5.8) | redirect stdout to a file or use a log driver |
+| `:6060` / `:9100` not reachable from another host | published on `127.0.0.1` only on purpose: pprof and metrics are unauthenticated | use an SSH tunnel or an authenticated reverse proxy |

@@ -79,6 +79,8 @@ A new trace is refused when the number of traces **started** for the partner equ
 
 ### FR-12 In-flight traces complete
 - AC1: A trace started before a stop condition is fully collected and printed at its `exitpoint`.
+- Known limitation: if PBS fails the auction with 4xx/5xx after the trace started, `exitpoint` is not invoked and the packet is
+  neither printed nor its slot released (analysis §5.6).
 
 ### FR-13 Zero side effects for non-traced requests
 - AC1: No output, no mutation, no error for requests with no matching rule or a stopped partner.

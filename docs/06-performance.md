@@ -40,7 +40,8 @@ using Go's default `net.Dialer` (no DNS cache, see §3). Knobs, defaults from `c
 | `tmax_adjustments.*` | disabled | disabled | enable when PBS-side overhead is measurable relative to `tmax` (it subtracts PBS processing time from the bidder deadline) |
 
 Verification signals: Prometheus counters `adapter_connection_created` vs `adapter_connection_reused` per bidder — the reuse
-ratio is the direct measure of pool health — and `adapter_request_time_seconds` histograms.
+ratio is the direct measure of pool health — plus the dial histograms `dns_lookup_time` and `tls_handshake_time` (enabled by
+`metrics.disabled_metrics.adapter_connections_dial_metrics: false`) and `adapter_request_time_seconds`.
 
 Also relevant: `compression.request/response.enable_gzip` (CPU for every request/response; keep it on only if the client sends
 gzip and bandwidth matters), `max_request_size` (default 256 KiB, bounds parse cost), and the separate `http_client_cache`
@@ -128,7 +129,12 @@ hotspot: at this load PBS is idle waiting for bidders, and the remaining CPU is 
 Reading of the run: the pool and dialer settings keep connection creation at cold-start levels only (7 new connections for
 605 calls), so DNS is effectively taken off the hot path and what remains is fully served by the sidecar cache. With
 `debug: true` on every request the response payload (~15 KB with `ext.debug.httpcalls`) and its gzip dominate PBS-side CPU;
-production traffic without the debug flag will sit well below this.
+production traffic without the debug flag will sit well below this. (`deploy/pbs.perf.yaml` has since set
+`account_defaults.debug_allow: false`, so later runs of `make perf` measure the non-debug path; the assessment `pbs.yaml` is unchanged.)
+
+Re-run of 2026-09-17 after the review fixes (debug off, dial metrics with their real names): 149 × 200, p50 137 ms, p99 765 ms,
+response bytes 431 KB total vs 2.3 MB with debug; adapter connections 595 reused / 1 created; `dns_lookup_time_count` 3,
+`tls_handshake_time_count` 0 (all four sample bidders are dialed over plain HTTP or reuse TLS sessions); CoreDNS 6/6 cache hits.
 
 ## 7. Recommendations (in order)
 
@@ -136,5 +142,7 @@ production traffic without the debug flag will sit well below this.
 2. Clamp auction timeouts (`auction_timeouts_ms.max`) to what the integration can tolerate; the assessment values are debug-only.
 3. Put a caching resolver in the pod/host; confirm with CoreDNS cache metrics that lookups are served locally.
 4. Keep bidder throttling in `simulate_throttling_only: true` for a few days of real traffic, then enable it.
-5. Scrape `:9100` and keep `:6060` reachable from the ops network only; profile on demand with `scripts/profile.sh`.
+5. Scrape `:9100` and keep `:6060` reachable from the ops network only (the compose files publish both on `127.0.0.1`; pprof is
+   unauthenticated and the admin server has no write timeout, so an open port lets anyone run unbounded profiles); profile on
+   demand with `scripts/profile.sh`.
 6. Track `make bench` in CI as the module's regression baseline (numbers above ±20 %).
