@@ -2,13 +2,15 @@
 # Load + profiling run against the Docker image with the perf profile (tuned config, caching DNS sidecar).
 # Live bidders are called for real — keep RPS modest. Produces $WORK/perf-report.md.
 #
-#   scripts/perf-docker.sh                       # 5 rps for 30 s, 30 s CPU profile
+#   scripts/perf-docker.sh                       # 5 rps for 30 s, 30 s CPU profile, assessment request
 #   RPS=10 DURATION=60 NO_BUILD=1 scripts/perf-docker.sh
+#   BODY=testdata/bid-request-live-bid.json scripts/perf-docker.sh   # onetag bids → raw_bidder_response + bid processing on the profile
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RPS="${RPS:-5}"
 DURATION="${DURATION:-30}"            # seconds; also the pprof CPU profile length
 CONCURRENCY="${CONCURRENCY:-16}"
+BODY="${BODY:-$ROOT/01-bid-request-example.json}"   # request body; testdata/bid-request-live-bid.json exercises a bidding path
 WORK="${WORK:-$(mktemp -d "${TMPDIR:-/tmp}/pbs-perf.XXXXXX")}"; mkdir -p "$WORK"
 COMPOSE=(docker compose --profile perf -f "$ROOT/docker-compose.yml")
 
@@ -38,7 +40,7 @@ curl -s http://localhost:9153/metrics >"$WORK/coredns-before.txt"
 log "3/6 CPU profile ($DURATION s) in the background + load: $RPS rps for $DURATION s"
 curl -s -o "$WORK/cpu.pprof" "http://localhost:6060/debug/pprof/profile?seconds=$DURATION" &
 PPROF_PID=$!
-"$WORK/loadgen" -url http://localhost:8080/openrtb2/auction -body "$ROOT/01-bid-request-example.json" \
+"$WORK/loadgen" -url http://localhost:8080/openrtb2/auction -body "$BODY" \
   -rps "$RPS" -duration "${DURATION}s" -concurrency "$CONCURRENCY" -out "$WORK/loadgen.json" | tee "$WORK/loadgen.txt" || true
 wait "$PPROF_PID" || true
 
@@ -55,7 +57,7 @@ log "6/6 report → $WORK/perf-report.md"
 {
   echo "# Perf run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo
-  echo "Config: deploy/pbs.perf.yaml; load: ${RPS} rps × ${DURATION}s, concurrency ${CONCURRENCY}; live bidders."
+  echo "Config: deploy/pbs.perf.yaml; load: ${RPS} rps × ${DURATION}s, concurrency ${CONCURRENCY}; live bidders; body: $(basename "$BODY")."
   echo
   echo '## Load generator'; echo '```'; cat "$WORK/loadgen.txt"; echo '```'
   echo
