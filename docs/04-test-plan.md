@@ -84,7 +84,7 @@ Preconditions: `PBS_DIR` points at a PBS checkout (v4 module path); Go ≥ 1.25;
 
 1. `scripts/install-module.sh` (copy + `go generate`), `go vet`, module tests, `go build` (live) — or `docker build` (image), where the same steps run inside the build stage.
 2. Start PBS with the **provided** `pbs.yaml`, stdout → `trace.ndjson`, stderr → `pbs.log`.
-3. Send `01-bid-request-example.json` N times (N > `TracePacketsAmount` of the sample partner), then one request with an unknown account.
+3. Phase A: send `01-bid-request-example.json` N times (N > `TracePacketsAmount` of the sample partner), then one request with an unknown account.
 4. Assert with `tracecheck -expect N -responses 'resp-*.json' -pbs-log pbs.log trace.ndjson`:
    - `trace.ndjson` has exactly `TracePacketsAmount` lines, each valid JSON, `partner_id == 664-025-677-881`, `packet_index` 1..N;
    - item 1: `incoming_request.body.id` equals the sample id;
@@ -94,6 +94,10 @@ Preconditions: `PBS_DIR` points at a PBS checkout (v4 module path); Go ≥ 1.25;
    - every HTTP response has `ext.prebid.modules` entries for `test_provider.test_tracer` with status `success` and no `failure`/`timeout`;
    - `pbs.log` contains no `Not found hook` warnings;
    - the unknown-account request adds no line.
+5. Phase B: send `testdata/bid-request-live-bid.json` twice (sample + onetag test publisher, `Account.ID` = `33415-10498`, rule amount 1).
+   Assert on the lines appended after phase A with `tracecheck -expect 1 -partner 33415-10498 -auction-id live-bid-1
+   -bidders aceex,appnexus,amx,adyoulike,onetag -strict-bids`: exactly one packet, five bidder requests, **at least one bidder
+   response** (onetag's test bid), final response with `seatbid`; the second request is refused by the amount rule.
 
 ## 6. Manual checks (L5) — see runbook
 

@@ -52,11 +52,19 @@ Direct calls to `http://ib.adnxs.com/openrtb2` with the exact body PBS sent, and
 request, other placement ids, `hb_source` 1/2, member + inv_code, `test: 0`) all returned 204 from this network (egress: Portugal).
 The test placement may be region-gated or retired; the reviewer's network may behave differently.
 
-E2E stays **live** (decision of the assignment owner: no mocks). Consequences for verification:
+E2E stays **live** (decision of the assignment owner: no mocks). A probe of 17 bidders with the test/example parameters published
+in the Prebid docs (2026-09-17, `test: 1`) found one that returns a real bid from its production endpoint from this network:
+**onetag** with `pubId: "386276e072"` answers HTTP 200 with a $2.00 banner (`crid: "test-creative"`), 5/5 attempts. The others:
+appnexus, criteo, pubmatic, sovrn, sharethrough, triplelift, yieldmo, gumgum, improvedigital, medianet → 204; openx → `nbr: 1`;
+smaato 422, smartadserver 403, adtelligent 400; 33across DNS failure; adnuntius 200 without a usable bid.
 
-- items 1, 2 and 4 are always produced and are asserted strictly;
-- item 3 is asserted on shape only and reported as a count; `STRICT_BIDS=1` turns "no live bidder responded" into a failure for networks where appnexus test mode works;
-- the unit and integration tests cover item 3 deterministically with in-code `adapters.BidderResponse` values.
+Consequences for verification (`scripts/e2e-*.sh`, assertions via `cmd/tracecheck`):
+
+- phase A runs the assessment request **verbatim**: items 1, 2 and 4 asserted strictly; item 3 on shape only (`STRICT_BIDS=1` to enforce);
+- phase B runs [testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json) — the same request plus the onetag test
+  publisher, with `parentAccount` removed so `Account.ID` resolves to `33415-10498` (second rule, one packet): item 3 is asserted
+  **strictly**, i.e. `raw_bidder_response` is exercised live and the packet carries onetag's bid;
+- the unit and integration tests cover item 3 deterministically as well.
 
 ### 2.4 Behaviour with the module absent
 
@@ -148,6 +156,6 @@ Checked on 2026-09-16 against the two pages referenced by the assessment:
 
 1. D1 (packet = auction) is the main interpretation risk. The counter is isolated in one function so switching to per-event counting is a small change.
 2. Trace bodies can be large (full requests and responses). Hardcoded rules bound the total; no truncation is applied.
-3. Live bidders return 204 for the sample from this network; the module cannot trace a response that PBS never produces. E2E is live by decision; item 3 is proven at unit/integration level and soft-asserted in e2e.
+3. The sample's four bidders return 204 from this network; item 3 is proven live through phase B of the e2e (onetag test publisher) and at unit/integration level. The assessment request itself stays unchanged in phase A.
 4. Hook timeouts are generous (120 s) in the provided config; the module still keeps hooks allocation-light and non-blocking except for the stdout write.
 5. The provided `groups` mapping relies on viper's weak typing; harmless today, brittle if PBS tightens decoding.

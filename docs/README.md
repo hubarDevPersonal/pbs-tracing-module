@@ -21,6 +21,7 @@ Code artefacts produced in this phase:
 | [../Dockerfile](../Dockerfile), [../Makefile](../Makefile), [../docker-compose.yml](../docker-compose.yml) | Build PBS (pinned commit) with the module compiled in and the assessment's `pbs.yaml` baked in; `make docker-e2e` runs the full check. |
 | [../deploy/](../deploy/) | `pbs.perf.yaml` tuned configuration and the CoreDNS `Corefile`; wired by the `perf` profile in `docker-compose.yml`. |
 | [../cmd/loadgen/](../cmd/loadgen/), [../internal/loadgen/](../internal/loadgen/) | Fixed-rate load generator with latency percentiles. |
+| [../testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json) | The sample request plus onetag's test publisher under the second rule; phase B of the e2e scripts proves item 3 live. |
 | [../scripts/](../scripts/) | `install-module.sh`, `e2e-live.sh` (local checkout), `e2e-docker.sh` (image), `perf-docker.sh`, `profile.sh`: builds PBS with the module, runs it with the provided `pbs.yaml` against live bidders, asserts the NDJSON trace. |
 
 Conventions used throughout:
