@@ -46,13 +46,13 @@ Executed inside a PBS master checkout and inside the Docker build stage (`go vet
 
 | Metric | Value |
 |--------|-------|
-| Top-level tests | 58 (63 incl. subtests) |
+| Top-level tests | 61 (66 incl. subtests) |
 | Result | all green, also under `-race` (full suite and `-run '^TestRace' -count 3`) |
-| Statement coverage, package | 91.3 % |
-| Coverage per hook | entrypoint 100 %, processed_auction_request 95 %, bidder_request 91.7 %, raw_bidder_response 91.7 %, all_processed_bid_responses 100 %, auction_response 88.9 %, exitpoint 86.7 % |
+| Statement coverage, package | 95.4 % |
+| Coverage per hook | entrypoint, processed_auction_request, bidder_request, raw_bidder_response, all_processed_bid_responses, auction_response 100 %; exitpoint 93.3 % |
 
-The two hooks below 90 % miss only the defensive `warnf` branch taken when marshalling an `*openrtb2.BidResponse` fails, which
-cannot be triggered with the real type. Kept for robustness (FR-15 AC2) rather than removed to game the metric.
+Every hook meets the ≥ 90 % bar of the official Go module guide. The marshal-failure branches (FR-15 AC2) are exercised with an
+invalid `json.RawMessage` in `Ext`, the one way `encoding/json` fails on the real PBS types (`module_errors_test.go`).
 
 ## 3. Test data
 
