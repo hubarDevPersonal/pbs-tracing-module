@@ -1,7 +1,3 @@
-# Default profile: the assessment configuration (pbs.yaml baked into the image).
-#   docker compose up --build
-# Perf profile: tuned config + caching DNS sidecar + metrics/pprof ports (docs/06-performance.md).
-#   docker compose --profile perf up --build dns pbs-perf   (name the services: pbs has no profile and would also start)
 services:
   pbs:
     build: .
@@ -10,38 +6,3 @@ services:
       - "8080:8080"
       - "6060:6060"
     # trace packets only: docker compose logs --no-log-prefix pbs 2>/dev/null
-
-  pbs-perf:
-    profiles: [perf]
-    build: .
-    image: pbs-tracer:local
-    volumes:
-      - ./deploy/pbs.perf.yaml:/usr/local/bin/pbs.yaml:ro
-    ports:
-      - "8080:8080"   # auction
-      - "6060:6060"   # admin: /debug/pprof, /version
-      - "9100:9100"   # prometheus metrics
-    dns:
-      - 10.213.77.53
-    depends_on:
-      - dns
-    networks:
-      pbsnet:
-
-  dns:
-    profiles: [perf]
-    image: coredns/coredns:1.12.1
-    command: ["-conf", "/etc/coredns/Corefile"]
-    volumes:
-      - ./deploy/coredns/Corefile:/etc/coredns/Corefile:ro
-    ports:
-      - "9153:9153"   # coredns metrics (coredns_cache_hits_total, coredns_dns_request_duration_seconds)
-    networks:
-      pbsnet:
-        ipv4_address: 10.213.77.53
-
-networks:
-  pbsnet:
-    ipam:
-      config:
-        - subnet: 10.213.77.0/24

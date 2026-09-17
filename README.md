@@ -35,13 +35,10 @@ sh 02-send-bid-request.sh                           # other terminal; repeat > T
 
 ```
 cmd/tracecheck/        CLI that verifies an NDJSON trace (used by the e2e scripts and CI-friendly)
-cmd/loadgen/           fixed-rate load generator with latency percentiles (used by scripts/perf-docker.sh)
 internal/testtracer/   the PBS module package — copied verbatim to <pbs>/modules/test_provider/test_tracer at build time
 internal/tracecheck/   verification library behind cmd/tracecheck
-internal/loadgen/      load generator library behind cmd/loadgen
-deploy/                pbs.perf.yaml (tuned config) and the CoreDNS Corefile for the perf profile
 docs/                  assessment text, analysis, specification, design, test plan, runbook
-scripts/               install-module.sh, e2e-live.sh, e2e-docker.sh, perf-docker.sh (load + pprof + metrics), profile.sh
+scripts/               install-module.sh, e2e-live.sh (local PBS checkout), e2e-docker.sh (image)
 Dockerfile             multi-stage: clone PBS @ PBS_REF, inject module, go generate, test, build; runtime with pbs.yaml baked in
 pbs.yaml, 01-bid-request-example.json, 02-send-bid-request.sh   assessment inputs, unchanged
 ```
@@ -59,8 +56,6 @@ make fmt         # gofumpt + golines
 make cover       # coverage of internal/testtracer
 make e2e         # live e2e against PBS_DIR=~/Dev/prebid-server
 make docker-e2e  # live e2e against the Docker image
-make bench       # module overhead per auction (ns/op, allocs)
-make perf        # perf profile: tuned config + caching DNS sidecar, load run, CPU profile, metric deltas
 ```
 
 CI (`.github/workflows/ci.yml`): lint, race tests, coverage, govulncheck (advisory), Docker image build with a `/status` smoke test.
@@ -69,13 +64,6 @@ CI (`.github/workflows/ci.yml`): lint, race tests, coverage, govulncheck (adviso
 
 Hardcoded in [internal/testtracer/rules.go](internal/testtracer/rules.go). The sample request resolves to
 `Account.ID = 664-025-677-881` (`site.publisher.ext.prebid.parentAccount`), which is the first rule.
-
-## Performance and load
-
-See [docs/06-performance.md](docs/06-performance.md): where a request spends its time, the PBS knobs that matter
-(`http_client` pools and dialer, adaptive bidder throttling, auction timeouts, GC threshold), DNS caching via a CoreDNS
-sidecar (`docker compose --profile perf`), CPU tracking with pprof on the admin port and Prometheus metrics, and the
-module's measured overhead.
 
 ## Known behaviour with live bidders
 
