@@ -14,7 +14,7 @@ import (
 )
 
 // An invalid json.RawMessage makes encoding/json fail, which is the only way the module's snapshot
-// marshalling can error with real PBS types. FR-15 AC2: such failures are logged, never returned.
+// marshaling can error with real PBS types. FR-15 AC2: such failures are logged, never returned.
 var brokenExt = json.RawMessage(`{"not":"closed"`)
 
 func TestHooks_MarshalFailuresAreLoggedNotReturned(t *testing.T) {
