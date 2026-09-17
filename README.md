@@ -79,7 +79,8 @@ module's measured overhead.
 
 ## Known behaviour with live bidders
 
-With the sample request all four bidders currently answer HTTP 204 (verified 2026-09-16, also by calling appnexus directly).
-Prebid Server then does not invoke `raw_bidder_response`, so item 3 is empty in live traces; it is covered by unit and
-integration tests, and `STRICT_BIDS=1` turns an empty item 3 into an e2e failure on networks where appnexus test mode bids.
-Details: [docs/01-analysis.md](docs/01-analysis.md) §2.3.
+With the sample request all four bidders answer HTTP 204 from this network (also when calling appnexus directly), so Prebid
+Server never invokes `raw_bidder_response` for them. Item 3 is therefore proven live with a second request,
+[testdata/bid-request-live-bid.json](testdata/bid-request-live-bid.json): the sample plus onetag's documented test publisher,
+which returns a real $2.00 test creative. Both e2e drivers run it as phase B with strict assertions; phase A keeps the assessment
+request verbatim. Details: [docs/01-analysis.md](docs/01-analysis.md) §2.3.

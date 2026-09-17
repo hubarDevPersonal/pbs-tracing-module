@@ -61,7 +61,18 @@ PBS then does not invoke `raw_bidder_response`, so `bidder_responses` is `[]` an
 behaviour, not a module defect; items 1, 2 and 4 are still produced. Item 3 is proven by the unit and integration tests and shows up
 in e2e as soon as any bidder actually bids (e.g., from a network where appnexus test mode returns a creative).
 
-Automated live run: `make e2e` (`PBS_DIR=... scripts/e2e-live.sh`; add `STRICT_BIDS=1` to require at least one live bidder response).
+To see item 3 populated live, send [testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json): the sample plus
+onetag's documented test publisher (`pubId 386276e072`, returns a $2.00 test creative), resolved to the second rule
+(`33415-10498`, one packet):
+
+```bash
+curl -s -H 'Content-Type: application/json' --data @testdata/bid-request-live-bid.json http://localhost:8080/openrtb2/auction >/dev/null
+tail -1 trace.ndjson | python3 -c 'import json,sys; p=json.load(sys.stdin); print([(b["bidder"], len(b["response"]["bids"])) for b in p["bidder_responses"]])'
+# → [('onetag', 1)]
+```
+
+Automated live run: `make e2e` / `make docker-e2e` — phase A is the assessment request verbatim, phase B is the live-bid request
+with item 3 asserted strictly.
 
 ## 6. Verifying hook execution from the HTTP response
 
@@ -75,6 +86,7 @@ for `test_provider.test_tracer`; each invocation should show `"status": "success
 | `pbs.log`: `Not found hook while building hook execution plan: test_provider.test_tracer …` on every request | module not compiled in (`builder.go` not regenerated) or `hooks.modules.test_provider.test_tracer.enabled` false | rerun `go generate ./modules/...`, rebuild, check config |
 | PBS exits with `failed to init "test_provider.test_tracer" module: …` | hardcoded rules failed validation | fix `internal/testtracer/rules.go` (empty PartnerID, non-positive Duration/amount, duplicate PartnerID) |
 | No trace line although account matches | partner already stopped (amount/duration) or process restarted mid-window | restart PBS to reset state; check `Duration` in `rules.go` |
-| Trace printed but `bidder_responses: []` | bidders returned 204/error → PBS skipped `raw_bidder_response` | expected with live no-bid; see §5 |
+| Trace printed but `bidder_responses: []` | bidders returned 204/error → PBS skipped `raw_bidder_response` | expected for the sample's bidders; use the live-bid request (§5) |
+| `ext.errors.prebid`: `Error sending the request to Prebid Cache: Post "///cache"` | the sample asks for bid caching (`ext.prebid.cache`) and `pbs.yaml` configures no cache host | harmless for tracing; set `cache.host` or drop `ext.prebid.cache` |
 | stdout mixed with logs | logs not redirected | run with `2>pbs.log` |
 | Port 8080 busy | another PBS/service | `lsof -iTCP:8080 -sTCP:LISTEN` |
