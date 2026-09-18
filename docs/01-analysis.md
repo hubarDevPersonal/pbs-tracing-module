@@ -78,6 +78,24 @@ Fill-rate and sandbox checks (2026-09-18), to rule out intermittent fill and tra
 | Xandr test hosts (`sand-ib.adnxs.com`, `test.adnxs.com`, `ib.adnxs-simple.com`; `ib-test.adnxs.com` and `api-test.adnxs.com` answer 404) | serve both protocols; OpenRTB 204 and `nobid: true` for both placements, http and https |
 | amx `testMode: true` through PBS (the adapter forwards `imp.ext.bidder` unchanged) | 204 — the PBS endpoint does not honour the Prebid.js test flag |
 
+Second network (2026-09-18, Hetzner, Finland — datacenter egress; requests to the bidders' **Prebid.js** endpoints with the
+documented test parameters):
+
+| Bidder | Endpoint | Outcome |
+|--------|----------|---------|
+| amx | `prebid.a-mo.net/a/c`, `testMode: true`, `tagId cHJlYmlkLm9yZw` | **200 with a bid**: price 1.0, 300×250, `crid TEST`, adomain adaptmx.com |
+| appnexus | `ib.adnxs.com/ut/v3/prebid` | 200, no real bid: test placements 13144370, 13232354, 13232361, 13232385 → `nobid: true`; placement 10433394 with `disable_psa: false` → `nobid: false` but a PSA at `cpm: 0`, which the Prebid.js adapter drops |
+| adyoulike | `hb-api.omnitagjs.com/hb-api/prebid/v1` | 204 for banner/video/native, both documented placements, with and without `X-Forwarded-For` (FR) |
+| aceex | `bl-us.aceex.io/?secret_key=prebidjs` | 204 for banner/video, bidfloor 0/0.2, both documented id pairs, with and without device |
+
+adyoulike and aceex answer 204 even for garbage ids, so the request format is accepted and they simply do not trade with
+these sources. What that means for PBS: the amx bid exists only on the Prebid.js endpoint and protocol — the PBS `amx`
+adapter posts OpenRTB to `pbs.amxrtb.com/auction/openrtb`, which ignores `testMode` (204, verified above); the appnexus PSA is
+served only by the UT protocol — the same placements over `ib.adnxs.com/openrtb2` return 204 (verified from PT), and PBS
+would in any case drop a `price: 0` bid without a deal id in `exchange/bidder_validate_bids.go` (the `raw_bidder_response`
+hook would still have fired). Two non-US networks, one residential and one datacenter, give the same picture; an IP/geo
+filter on the bidders' side is the remaining explanation and cannot be told apart from here.
+
 Conclusion: the appnexus test placement has no creative to serve to requests originating here; using Xandr's sandbox
 hosts requires sandbox member/placement ids that only come with a Xandr account.
 
