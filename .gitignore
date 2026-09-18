@@ -1,0 +1,13 @@
+# build / run artefacts
+bin/
+prebid-server
+pbs-e2e
+*.log
+trace.ndjson
+*.out
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+# local claude settings
+.claude/settings.local.json

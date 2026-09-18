@@ -1,0 +1,148 @@
+{
+    "id": "live-bid-1",
+    "at": 2,
+    "tmax": 120000,
+    "test": 1,
+    "imp": [
+        {
+            "id": "974090632",
+            "tagid": "61653-1",
+            "banner": {
+                "format": [
+                    {
+                        "w": 300,
+                        "h": 250
+                    },
+                    {
+                        "w": 300,
+                        "h": 600
+                    }
+                ]
+            },
+            "ext": {
+                "prebid": {
+                    "bidder": {
+                        "aceex": {
+                            "accountid": "someAccountID"
+                        },
+                        "appnexus": {
+                            "placementId": 12883451
+                        },
+                        "amx": {},
+                        "adyoulike": {
+                            "placement": "some-placement-id"
+                        },
+                        "onetag": {
+                            "pubId": "386276e072"
+                        }
+                    }
+                }
+            },
+            "iframebuster": []
+        }
+    ],
+    "site": {
+        "id": "17945",
+        "domain": "domain_app.com",
+        "name": "NON-addicting Games(alias)",
+        "cat": [
+            "IAB9"
+        ],
+        "page": "http://newgame.nonaddictinggames.com/even/newer",
+        "publisher": {
+            "id": "33415-10498"
+        }
+    },
+    "device": {
+        "ifa": "1122334455",
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_6_8) AppleWebKit/534.59.10 (KHTML, like Gecko) Version/5.1.9 Safari/534.59.10",
+        "ip": "3.80.113.30",
+        "ipv6": "2a05:d07a:4000:0000:09C0:876A:130B:417A",
+        "language": "en",
+        "devicetype": 2,
+        "js": 1,
+        "geo": {
+            "country": "USA",
+            "region": "NY"
+        },
+        "sua": {
+            "browsers": [
+                {
+                    "brand": "Safari",
+                    "version": [
+                        "5",
+                        "1",
+                        "9"
+                    ]
+                },
+                {
+                    "brand": "AppleWebKit",
+                    "version": [
+                        "534",
+                        "59",
+                        "10"
+                    ]
+                }
+            ],
+            "platform": {
+                "brand": "macOS",
+                "version": [
+                    "10",
+                    "6",
+                    "8"
+                ]
+            },
+            "mobile": 0,
+            "architecture": "x86",
+            "model": "",
+            "bitness": "64",
+            "source": 0
+        }
+    },
+    "user": {
+        "id": "ignore-3f234f9a06ab82120afdbf1e12df919b2e388cab",
+        "consent": "CQH-gkAQH-gkAAbAKBENBPFsAP_gAEPgAAwIKjNF9G_fbWFr8H73abtkeYVPx1hz6sQhBhaJEUYEyDqS_IwXxGAxJA3ooqICmRIAO1TAIQNlGBBQRVAgaIgFJQDMaECUoDBCJCAEiFIRE0ZICAxvGwtD-ACQZPr8NlUx2B8p5YJo2FzAgwkHmXa5wmawAJCRA5StBfvlRRKL81IARlxwuwlYuFXgAGPOTBl_kUuppD9-ctsb3XWU9vaff4dPn2YuB_aLw6NQVGAJINCogCLIkJCCQEIIEAKgjCAigQBAAAkDQAQAkDAh2BgEqMBEAIAQAAwAAgAABgAAAAASAACAAIAAgQAAQCAQAAAAQDAAAMAAAGACgAAAABAcAhSAgAECwASMSIhTAhCASAAFsKEAACBBUCEAgcCiAREgEAAAIABGAAACwGBhBICFgAABcQLAAAEACAAQABAKTMwBBAGTLEUiwbQlaQEg-IDHpMASQAggAAAA.f9AAACwAAAAA",
+        "eids": [
+            {
+                "source": "rubiconproject.com",
+                "uids": [
+                    {
+                        "id": "AABBCCDDEE",
+                        "atype": 3
+                    }
+                ]
+            },
+            {
+                "source": "OpenRTB-bid-request-source",
+                "uids": [
+                    {
+                        "id": "uuiidd-vv44",
+                        "atype": 3
+                    }
+                ]
+            }
+        ],
+        "ext": {
+            "sessiondepth": 1
+        }
+    },
+    "kwarray": [
+        "nonaddict",
+        "nongame"
+    ],
+    "ext": {
+        "prebid": {
+            "debug": true,
+            "trace": "verbose",
+            "cache": {
+                "bids": {
+                    "returnCreative": true
+                }
+            },
+            "targeting": {
+                "includeWinners": true,
+                "includeBidderKeys": true
+            }
+        }
+    }
+}
