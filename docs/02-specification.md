@@ -15,7 +15,7 @@ Scope: Prebid Server `/openrtb2/auction` endpoint only. Terminology follows [01-
 
 ## 2. Functional requirements
 
-Each requirement has acceptance criteria (AC). Test IDs are assigned in [04-test-plan.md](04-test-plan.md).
+Each requirement has acceptance criteria (AC). The scenarios that demonstrate them are in [test-specs/](test-specs/).
 
 ### FR-01 Module identity and registration
 The module is registered as vendor `test_provider`, module `test_tracer`, and is built by `Builder(json.RawMessage, moduledeps.ModuleDeps)`.

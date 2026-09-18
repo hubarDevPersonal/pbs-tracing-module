@@ -28,7 +28,7 @@ func samplePacket(idx int) TracePacket {
 	}
 }
 
-// FR-08 AC1
+// M-16. FR-08 AC1
 func TestJSONEmitter_WritesOneLinePerPacket(t *testing.T) {
 	out := &syncBuffer{}
 	em := newJSONEmitter(out)
@@ -46,7 +46,7 @@ func TestJSONEmitter_WritesOneLinePerPacket(t *testing.T) {
 	}
 }
 
-// FR-08 AC2 / spec §5: exact key set and embedded JSON values.
+// M-16. FR-08 AC2 / spec §5: exact key set and embedded JSON values.
 func TestJSONEmitter_PacketSchema(t *testing.T) {
 	out := &syncBuffer{}
 	require.NoError(t, newJSONEmitter(out).Emit(samplePacket(1)))
@@ -87,7 +87,7 @@ func TestJSONEmitter_PacketSchema(t *testing.T) {
 	assert.JSONEq(t, `{"currency":"USD","bids":[]}`, string(bidderResps[0]["response"]))
 }
 
-// FR-08 AC5
+// M-19. FR-08 AC5
 func TestJSONEmitter_TimestampsAreRFC3339NanoUTC(t *testing.T) {
 	out := &syncBuffer{}
 	p := samplePacket(1)
@@ -106,7 +106,8 @@ func TestJSONEmitter_TimestampsAreRFC3339NanoUTC(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// design §8: write failures are reported to the caller (the hook logs and continues).
+// M-28. design §8: write failures are reported to the caller (the hook logs and continues).
+// FR-15 AC2: a stdout write failure is returned to the hook, which logs it.
 func TestJSONEmitter_WriteErrorIsReturned(t *testing.T) {
 	boom := errors.New("stdout closed")
 	err := newJSONEmitter(failingWriter{err: boom}).Emit(samplePacket(1))

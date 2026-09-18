@@ -4,19 +4,18 @@ Implements [02-specification.md](02-specification.md). PBS facts from [01-analys
 
 ## 1. Package layout
 
-In this repository the package lives at `internal/testtracer`; the Dockerfile and `scripts/install-module.sh` copy it to
-`<pbs>/modules/test_provider/test_tracer` (the path PBS's generator requires). The package imports only PBS and the standard
-library, so the copy is verbatim.
+The package lives at `modules/test_provider/test_tracer`, the path PBS's generator requires, both in this repository and in the
+PBS tree. It imports only PBS and the standard library, so the Dockerfile and `scripts/install-module.sh` copy the directory verbatim.
 
 ```text
-internal/testtracer/          → modules/test_provider/test_tracer/ in the PBS tree
+modules/test_provider/test_tracer/
 ├── module.go            # Builder, Module, the seven hook handlers, module-context keys
 ├── rules.go             # Rule type, hardcoded defaultRules, validateRules
 ├── tracer.go            # Tracer (per-partner state, stop conditions), AuctionTrace (per-request collector)
 ├── output.go            # TracePacket DTOs, Emitter interface, jsonEmitter (NDJSON to io.Writer)
 ├── README.md            # PBS-style module documentation
 ├── testdata/bid_request.json
-├── *_test.go            # unit, integration, race tests (same package)
+├── *_test.go            # unit, integration, race and overhead tests (same package)
 ```
 
 Package name `testtracer` (Go style: no underscores). Directory names are dictated by PBS's generator regex `^([^/]+)/([^/]+)/module.go$`.
@@ -163,6 +162,11 @@ sequenceDiagram
 
 No goroutines are created by the module. No channels. No blocking except the `Write`.
 
+The `Write` holds `jsonEmitter.mu`, so a stdout that stops draining stalls every **traced** auction at `exitpoint`, one behind the
+other; PBS's hook timer then reports a timeout and the auction proceeds, while the hook goroutine stays parked on the write (analysis
+§3.3). Untraced auctions never reach the emitter and are unaffected. The rules bound how many auctions can be traced, so the exposure
+is bounded too. Both properties are load criteria (`docs/test-specs/load.md`).
+
 ## 6. Time
 
 `Module.now` and `Tracer.now` are the same injected function (`time.Now` in production). Every recorded timestamp is `now().UTC()`.
@@ -170,7 +174,7 @@ Durations are compared with monotonic-clock-backed `time.Time` values (`Sub`), s
 
 ## 7. Registration and configuration
 
-1. `PBS_DIR=<pbs> scripts/install-module.sh` copies `internal/testtracer` to `<pbs>/modules/test_provider/test_tracer/`.
+1. `PBS_DIR=<pbs> scripts/install-module.sh` copies `modules/test_provider/test_tracer` to the same path in `<pbs>`.
 2. It then runs `go generate ./modules/...` (executes `modules/generator/buildergen.go`) to regenerate `modules/builder.go`; it adds
    `"test_provider": {"test_tracer": test_providerTest_tracer.Builder}`.
 3. Configuration is already present in the provided `pbs.yaml`:
@@ -192,9 +196,11 @@ No account-level configuration is read (`miCtx.AccountConfig` ignored).
 
 ## 9. Performance notes
 
-- Per traced request: 1 body copy + (1 + bidders×2 + 1) JSON marshals + 1 final marshal. Non-traced requests: one map lookup at
-  `processed_auction_request`, one context `Get` per later hook.
-- No allocation for non-traced requests beyond the executor's own `HookResult`.
+- Per traced request: 1 body copy + (1 + bidders×2 + 1) JSON marshals + 1 final marshal + 1 stdout write.
+- Per untraced request: the `entrypoint` body copy, because the account is unknown until `processed_auction_request`; one map lookup
+  there; one module-context `Get` per later hook. No lock is taken: `Tracer.mu` is reached only when the account matches a rule.
+- Rules cap the number of traced auctions per process, so the steady-state cost of the module is the untraced path. Its allocation
+  budget is asserted in the default test suite; timing is measured by the benchmarks (`docs/test-specs/load.md`).
 - Trace memory is released at `exitpoint` by clearing the context key; the `ModuleContext` itself is owned by the executor and dies with the request.
 
 ## 10. Packaging (Docker)

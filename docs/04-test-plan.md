@@ -1,108 +1,73 @@
 # 04 — Test Plan
 
-Requirements: [02-specification.md](02-specification.md). Design: [03-design.md](03-design.md).
-Test code lives in `internal/testtracer/*_test.go` (same package, `testify`); `internal/tracecheck` has its own unit tests. This phase delivers the tests in the
-**red** state against an API skeleton; the implementation phase turns them green without changing the tests' intent.
+Requirements: [02-specification.md](02-specification.md). Test specifications: [test-specs/](test-specs/).
 
-## 1. Levels
+This document states how the module is tested: levels, environments, entry and exit criteria, and how tests stay tied to
+requirements. What each test checks is in the test specifications. Results belong to CI, not here.
 
-| Level | Where | What it proves | Tooling |
-|-------|-------|----------------|---------|
-| L1 Unit | `rules_test.go`, `tracer_test.go`, `output_test.go`, `module_test.go`, `module_branches_test.go` | Rule validation, stop conditions with a fake clock, snapshot semantics, JSON contract, each hook in isolation | `make test` |
-| L2 Race | `race_test.go` (`TestRace*`) | Slot reservation under contention, concurrent bidder hooks on one trace, non-interleaved output | `go test ./internal/testtracer -race -run '^TestRace' -count 3` |
-| L3 Integration (in-process) | `integration_test.go` | The module driven by the real `hookexecution` executor and plan builder built from the provided `pbs.yaml` stage list; module-context propagation across stages; outcomes have no errors | `go test -run Integration` |
-| L4 End-to-end | `e2e/` | PBS with the module registered, the provided `pbs.yaml` and `02-send-bid-request.sh` unchanged, **live bidders**; asserts NDJSON on stdout, hook outcomes in the HTTP response and absence of `Not found hook` warnings. Assertions are implemented in `internal/tracecheck` (unit-tested) and run through `cmd/tracecheck`. Two drivers: local checkout (`scripts/e2e-live.sh`) and Docker image (`scripts/e2e-docker.sh`) | `make e2e` / `make docker-e2e` |
-| L5 Manual | [05-runbook.md](05-runbook.md) | Reviewer walkthrough with the provided `02-send-bid-request.sh` | shell |
+## 1. Separation of concerns
 
-Exit criteria for the implementation phase: L1–L3 green with `-race`, `go vet` clean, L4 green on a machine with Go and the PBS checkout,
-coverage ≥ 90 % statements for **each implemented hook** (official Go module guide) and for the package as a whole (PBS `scripts/check_coverage.sh`).
+- **Requirements** (`02-specification.md`) say what the module must do: `FR-xx` / `NFR-xx` with acceptance criteria `ACn`.
+- **Test specifications** (`test-specs/`) say how each acceptance criterion is demonstrated, as Given / When / Then scenarios with
+  stable ids (`M-xx` module, `E-xx` end to end, `L-xx` load). They are written from the requirements alone and name no code: no
+  functions, files or internal types. Whoever writes them needs the specification, not the implementation.
+- **Tests** implement scenarios. Every test names the scenario ids and acceptance criteria it covers in its doc comment, so the
+  requirement → scenario → test chain is found by searching the code, and no hand-maintained matrix goes stale.
+- **The e2e suite decodes the trace with its own types**, restated from the JSON contract (spec §5), and never imports the module.
+  A change in the module that breaks the contract fails the e2e suite instead of silently updating it.
 
-## 2. Traceability matrix
+A change of behaviour starts in the specification, then the test specifications, then the tests, then the code.
 
-| Requirement | Tests |
-|-------------|-------|
-| FR-01 registration | `TestBuilder_ReturnsModuleImplementingAllPlannedStages`, L4 `no "Not found hook" warnings` |
-| FR-02 rules | `TestValidateRules` (table), `TestDefaultRulesAreValid`, `TestDefaultRulesCoverSampleRequestAccount`, `TestNewTracer_RejectsInvalidRules`, `TestNewModule_FailsOnInvalidRules` |
-| FR-03 trigger | `TestTracerBegin_UnknownPartnerIsNotTraced`, `TestTracerBegin_FirstPacketStartsWindow`, `TestProcessedAuction_StartsTraceForMatchingAccount`, `TestProcessedAuction_NoTraceForUnknownAccount`, `TestIntegration_SampleRequestIsTracedEndToEnd` |
-| FR-04 incoming request | `TestEntrypoint_CapturesBodyAndTimestamp`, `TestEntrypoint_CopiesBody`, `TestProcessedAuction_AttachesEntrypointCapture`, `TestProcessedAuction_FallsBackWhenEntrypointCaptureMissing` |
-| FR-05 bidder requests | `TestBidderRequest_RecordsOutgoingRequestForTracedAuction`, `TestBidderRequest_IsNoopWithoutActiveTrace`, `TestAuctionTrace_SnapshotsAreImmutable`, `TestAuctionTrace_PreservesInvocationOrder` |
-| FR-06 bidder responses | `TestRawBidderResponse_RecordsIncomingResponse`, `TestAuctionTrace_PacketContainsAllSections`, `TestExitpoint_EmitsPacketWhenBidderReturnedNoResponse` |
-| FR-07 final response | `TestAuctionResponse_RecordsFinalResponse`, `TestExitpoint_UsesExitpointResponseWhenAvailable`, `TestExitpoint_FallsBackToAuctionResponseWhenPayloadIsNotBidResponse` |
-| FR-08 output | `TestJSONEmitter_WritesOneLinePerPacket`, `TestJSONEmitter_PacketSchema`, `TestJSONEmitter_TimestampsAreRFC3339NanoUTC`, `TestJSONEmitter_WriteErrorIsReturned`, `TestExitpoint_EmitsSinglePacketWithAllSections`, `TestExitpoint_DoesNotEmitTwice`, `TestExitpoint_EmitsNothingWithoutActiveTrace`, `TestAuctionTrace_EmptyPacketHasEmptyArrays` |
-| FR-09 time limit | `TestTracerBegin_DurationLimitStopsTracing` (boundary: `== Duration` traced, `+1ns` refused) |
-| FR-10 amount limit | `TestTracerBegin_AmountLimitStopsTracing`, `TestRaceTracerBeginNeverExceedsAmount`, `TestProcessedAuction_RespectsStopConditions` |
-| FR-11 whichever first / no re-arm | `TestTracerBegin_WhicheverComesFirst`, `TestTracerBegin_StoppedPartnerDoesNotRearm`, `TestTracerBegin_PartnersAreIndependent` |
-| FR-12 in-flight completes | `TestIntegration_InFlightTraceCompletesAfterPartnerStopped` |
-| FR-13 zero side effects | `TestProcessedAuction_NoTraceForUnknownAccount`, `TestExitpoint_EmitsNothingWithoutActiveTrace`, `TestIntegration_SecondAuctionBeyondLimitProducesNoOutput` |
-| FR-14 endpoint scope | `TestEntrypoint_IgnoresNonAuctionEndpoint`, `TestModule_TracesOnlyAuctionEndpoint` |
-| FR-15 never interfere | `TestHooks_NeverRejectNeverMutate`, `TestHooks_ToleratesNilModuleContextAndNilPayloads`, `TestAuctionTrace_NilInputsAreSafe`, `TestIntegration_OutcomesHaveNoErrors` |
-| FR-16 concurrency | `TestRaceAuctionTraceConcurrentAppends`, `TestRaceModuleConcurrentBidderHooks`, `TestRaceJSONEmitterConcurrentEmits`, `TestRaceModuleConcurrentRequests` |
-| NFR-04 | `golangci-lint` (gofumpt, golines, gosec, revive, …) and `go vet` in `make lint` and CI |
-| NFR-05 | all L1 tests use `fakeClock` and `bytes.Buffer`/`syncBuffer` |
+## 2. Levels
 
-## 2.1 Status of the suite (2026-09-16)
+| Level | Scope | Environment | Scenarios |
+|-------|-------|-------------|-----------|
+| Unit | rules, tracer state, trace collector, JSON output, each hook in isolation | in process; fake clock, in-memory writer | [module.md](test-specs/module.md) |
+| Race | shared state under concurrent hooks and requests | in process, `-race`, repeated runs | [module.md](test-specs/module.md) |
+| Integration | the module driven by PBS's real hook executor and plan builder, with the stage list of the provided `pbs.yaml` | in process, no HTTP server | [module.md](test-specs/module.md) |
+| End to end | PBS built at the pinned commit with the module compiled in, the provided `pbs.yaml` unchanged, **live bidders** | Docker image, started by the test | [e2e.md](test-specs/e2e.md) |
+| Load | the module's steady-state cost and blocking behaviour; PBS with the module under a sustained auction rate | in process (every run) and a running PBS with live bidders (on demand) | [load.md](test-specs/load.md) |
 
-Executed inside a PBS master checkout and inside the Docker build stage (`go vet` clean, `gofmt` clean):
+No mocks of PBS and no mock bidders: the in-process levels use PBS's own packages, and the end-to-end and load levels use the real
+server against live bidders (decision of the assignment owner).
 
-| Metric | Value |
-|--------|-------|
-| Top-level tests | 61 (66 incl. subtests) |
-| Result | all green, also under `-race` (full suite and `-run '^TestRace' -count 3`) |
-| Statement coverage, package | 95.4 % |
-| Coverage per hook | entrypoint, processed_auction_request, bidder_request, raw_bidder_response, all_processed_bid_responses, auction_response 100 %; exitpoint 93.3 % |
+## 3. How each level runs
 
-Every hook meets the ≥ 90 % bar of the official Go module guide. The marshal-failure branches (FR-15 AC2) are exercised with an
-invalid `json.RawMessage` in `Ext`, the one way `encoding/json` fails on the real PBS types (`module_errors_test.go`).
+| Level | Command | When |
+|-------|---------|------|
+| Unit, race, integration, in-process load criteria | `make test` | every change; CI on every push and pull request |
+| Race, repeated | `go test ./modules/test_provider/test_tracer -race -run '^TestRace' -count 3` | CI |
+| Coverage | `make cover` | CI |
+| Benchmarks | `make bench` | on changes to the hook path; compared against the previous run |
+| End to end | `make e2e` (build tag `e2e`) | before merging module changes; needs Docker and outbound internet |
+| Load against PBS | `make load` or `make perf` (build tag `load`) | before merging changes to the hook path or the PBS configuration |
 
-## 3. Test data
+The `e2e` and `load` suites sit behind build tags because they need Docker, network and minutes of wall time. The helpers they use
+(trace verification, the load driver) have unit tests in the default suite.
 
-- `testdata/bid_request.json` — verbatim copy of `01-bid-request-example.json`. Resolved `Account.ID` is `664-025-677-881`.
-- Bidder responses are constructed in code (`adapters.BidderResponse{Currency: "USD", Bids: [...]}`) — no live network.
-- Fake clock: `fakeClock{Now(), Advance(d)}`, start `2026-09-16T10:00:00Z`.
+## 4. Entry and exit criteria
 
-## 4. Integration test design (L3)
+Entry: the module builds inside the pinned PBS tree (`go generate`, `go vet`, `gofmt` in the Docker build stage).
 
-Builds the stack PBS itself uses, with no HTTP server:
+Exit, all required:
 
-```go
-repo, _ := hooks.NewHookRepository(map[string]interface{}{ModuleCode: module})
-planBuilder := hooks.NewExecutionPlanBuilder(config.Hooks{Enabled: true, HostExecutionPlan: planFromProvidedYAML}, repo)
-executor := hookexecution.NewHookExecutor(planBuilder, hookexecution.EndpointAuction, &metricsConfig.NilMetricsEngine{})
-```
+- every scenario in `test-specs/` has at least one test that names it;
+- unit, race and integration levels green with `-race`; `go vet` and `golangci-lint` clean, including the `e2e` and `load` tags;
+- statement coverage ≥ 90 % for each implemented hook and for the package (official Go module guide, PBS `scripts/check_coverage.sh`);
+- end-to-end green against a freshly built image;
+- load criteria of `load.md` met: the in-process ones in every run, the ones against PBS before a release.
 
-then drives the stages in the order `auction.go` / `exchange` do: `ExecuteEntrypointStage` → `SetAccount(&config.Account{ID: "664-025-677-881"})`
-→ `ExecuteProcessedAuctionStage` → per bidder `ExecuteBidderRequestStage` + `ExecuteRawBidderResponseStage` → `ExecuteAllProcessedBidResponsesStage`
-→ `ExecuteAuctionResponseStage` → `ExecuteExitpointStage(resp, httptest.NewRecorder())`. Assertions: exactly one NDJSON line, all four
-sections present, `executor.GetOutcomes()` has only `StatusSuccess` results with empty `Errors`.
+## 5. Test data
 
-The plan is the stage list from the provided `pbs.yaml`, expressed as JSON and unmarshalled into `config.HookExecutionPlan`, so the test
-fails if the config keys used in the assessment stop matching the PBS config schema.
+- `modules/test_provider/test_tracer/testdata/bid_request.json` is a verbatim copy of `01-bid-request-example.json`. Its account resolves
+  to `664-025-677-881`.
+- `testdata/bid-request-live-bid.json` is the sample plus onetag's documented test publisher, with `parentAccount` removed so the account
+  resolves to `33415-10498`. onetag returns a real test bid, which exercises bidder responses live.
+- Bidder responses at the in-process levels are built in code. Time at the unit level comes from a fake clock.
 
-## 5. End-to-end (L4) — `scripts/e2e-*.sh`, live bidders
+## 6. Known limits of the suite
 
-Preconditions: `PBS_DIR` points at a PBS checkout (v4 module path); Go ≥ 1.25; outbound internet; ports 8080/6060 free. No mocks by decision.
-
-1. `scripts/install-module.sh` (copy + `go generate`), `go vet`, module tests, `go build` (live) — or `docker build` (image), where the same steps run inside the build stage.
-2. Start PBS with the **provided** `pbs.yaml`, stdout → `trace.ndjson`, stderr → `pbs.log`.
-3. Phase A: send `01-bid-request-example.json` N times (N > `TracePacketsAmount` of the sample partner), then one request with an unknown account.
-4. Assert with `tracecheck -expect N -responses 'resp-*.json' -pbs-log pbs.log trace.ndjson`:
-   - `trace.ndjson` has exactly `TracePacketsAmount` lines, each valid JSON, `partner_id == 664-025-677-881`, `packet_index` 1..N;
-   - item 1: `incoming_request.body.id` equals the sample id;
-   - item 2: `bidder_requests` covers exactly `{aceex, appnexus, amx, adyoulike}`, each with the same auction id and a timestamp ≥ the incoming one;
-   - item 3: every `bidder_responses` entry has a known bidder and the DTO shape; total count is reported. With live bidders answering 204 the list may be empty (PBS never calls `raw_bidder_response`); `STRICT_BIDS=1` makes an empty total a failure;
-   - item 4: `final_response.body.id` equals the sample id and contains `ext.debug`, proving it is the enriched response the client received;
-   - every HTTP response has `ext.prebid.modules` entries for `test_provider.test_tracer` with status `success` and no `failure`/`timeout`;
-   - `pbs.log` contains no `Not found hook` warnings;
-   - the unknown-account request adds no line.
-5. Phase B: send `testdata/bid-request-live-bid.json` twice (sample + onetag test publisher, `Account.ID` = `33415-10498`, rule amount 1).
-   Assert on the lines appended after phase A with `tracecheck -expect 1 -partner 33415-10498 -auction-id live-bid-1
-   -bidders aceex,appnexus,amx,adyoulike,onetag -strict-bids`: exactly one packet, five bidder requests, **at least one bidder
-   response** (onetag's test bid), final response with `seatbid`; the second request is refused by the amount rule.
-
-## 6. Manual checks (L5) — see runbook
-
-Includes the observation that with live bidders `bidder_responses` may be empty (204), which is expected and documented (FR-06 AC2).
-
-## 7. Non-goals of the test suite
-
-No load/performance tests; no tests of PBS internals beyond what the integration test needs; no assertions on ordering across bidders.
+- The sample's four bidders answer 204 from every network tried (analysis §2.3.1), so the assessment request alone never exercises
+  bidder responses live. The live-bid request covers it; the in-process levels cover it deterministically.
+- Latency against live bidders is dominated by the bidders and is reported, not asserted. Timing budgets apply only in process.
+- Capacity of PBS itself needs stubbed bidders or stored responses and is out of scope; the load level checks the module, not PBS.

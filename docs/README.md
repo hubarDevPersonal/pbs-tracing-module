@@ -8,23 +8,24 @@ This folder contains the assessment text and the engineering artefacts for the m
 | 01 | [01-analysis.md](01-analysis.md) | Facts established from the Prebid Server source and a live run of the provided artefacts. Ambiguities and the decisions taken. |
 | 02 | [02-specification.md](02-specification.md) | Functional and non-functional requirements with acceptance criteria, the trace JSON contract, and the rule/state model. |
 | 03 | [03-design.md](03-design.md) | Technical design: package layout, types, hook-by-hook behaviour, concurrency model, registration, testability seams. |
-| 04 | [04-test-plan.md](04-test-plan.md) | Test strategy and requirement-to-test traceability. Unit, race, in-process integration, and end-to-end levels. |
-| 05 | [05-runbook.md](05-runbook.md) | How to build, register, run, and verify the module locally. Troubleshooting. |
-| 06 | [06-performance.md](06-performance.md) | Request-time budget, PBS performance knobs (HTTP client pools, throttling, timeouts, GC), DNS caching sidecar, CPU tracking (pprof, Prometheus), module overhead benchmarks and a measured load run. |
+| 04 | [04-test-plan.md](04-test-plan.md) | Test strategy: levels, environments, entry and exit criteria, how tests stay tied to requirements. |
+| — | [test-specs/](test-specs/) | Test specifications: Given / When / Then scenarios per level (module, end to end, load), derived from the requirements only. |
+| 05 | [05-runbook.md](05-runbook.md) | How to build, register, run, verify and load-test the module locally. Troubleshooting. |
 
-Code artefacts produced in this phase:
+Code:
 
 | Path | Content |
 |------|---------|
-| [../internal/testtracer/](../internal/testtracer/) | The module package (copied to `<pbs>/modules/test_provider/test_tracer` at build time): implementation, module README, test suite (58 tests, race-clean, 91 % coverage). |
-| [../internal/tracecheck/](../internal/tracecheck/), [../cmd/tracecheck/](../cmd/tracecheck/) | Verification library and CLI for NDJSON traces; the assertion step of the e2e scripts. |
-| [../Dockerfile](../Dockerfile), [../Makefile](../Makefile), [../docker-compose.yml](../docker-compose.yml) | Build PBS (pinned commit) with the module compiled in and the assessment's `pbs.yaml` baked in; `make docker-e2e` runs the full check. |
+| [../modules/test_provider/test_tracer/](../modules/test_provider/test_tracer/) | The module at the path PBS requires: implementation, module README, unit, race, integration and overhead tests. |
+| [../test/e2e/](../test/e2e/) | End-to-end suite: runs the Docker image, drives live auctions, verifies the trace against the JSON contract. |
+| [../test/load/](../test/load/) | Load suite and its constant-rate driver. |
+| [../Dockerfile](../Dockerfile), [../Makefile](../Makefile), [../docker-compose.yml](../docker-compose.yml) | Build PBS (pinned commit) with the module compiled in and the assessment's `pbs.yaml` baked in. |
 | [../deploy/](../deploy/) | `pbs.perf.yaml` tuned configuration and the CoreDNS `Corefile`; wired by the `perf` profile in `docker-compose.yml`. |
-| [../cmd/loadgen/](../cmd/loadgen/), [../internal/loadgen/](../internal/loadgen/) | Fixed-rate load generator with latency percentiles. |
-| [../testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json) | The sample request plus onetag's test publisher under the second rule; phase B of the e2e scripts proves item 3 live. |
-| [../scripts/](../scripts/) | `install-module.sh`, `e2e-live.sh` (local checkout), `e2e-docker.sh` (image), `perf-docker.sh`, `profile.sh`: builds PBS with the module, runs it with the provided `pbs.yaml` against live bidders, asserts the NDJSON trace. |
+| [../testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json) | The sample request plus onetag's test publisher under the second rule; exercises bidder responses live. |
+| [../scripts/](../scripts/) | `install-module.sh` (into a PBS checkout), `perf-docker.sh` (load suite + CPU profile + metrics on the perf profile), `profile.sh`. |
 
 Conventions used throughout:
 
-- Requirement IDs `FR-xx` / `NFR-xx` are defined in the specification and referenced from design and tests.
+- Requirement IDs `FR-xx` / `NFR-xx` are defined in the specification. Scenario ids `M-xx`, `E-xx`, `L-xx` are defined in the
+  test specifications. Tests name both in their doc comments.
 - Prebid Server facts reference the upstream repository at commit `f660bedc` (module path `github.com/prebid/prebid-server/v4`, Go 1.25) as checked out on 2026-09-16.

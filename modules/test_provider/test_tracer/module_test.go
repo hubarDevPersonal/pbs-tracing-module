@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// FR-01 AC1
+// M-01. FR-01 AC1
 func TestBuilder_ReturnsModuleImplementingAllPlannedStages(t *testing.T) {
 	module, err := Builder(json.RawMessage(`{"enabled": true}`), moduledeps.ModuleDeps{})
 	require.NoError(t, err)
@@ -41,13 +41,13 @@ func TestBuilder_ReturnsModuleImplementingAllPlannedStages(t *testing.T) {
 	assert.NotNil(t, m.now, "Builder must wire the clock")
 }
 
-// FR-02 AC1
+// M-02. FR-02 AC1
 func TestNewModule_FailsOnInvalidRules(t *testing.T) {
 	_, err := newModule([]Rule{{PartnerID: "p", Duration: 0, TracePacketsAmount: 1}}, newJSONEmitter(&syncBuffer{}), time.Now)
 	assert.Error(t, err)
 }
 
-// FR-04 AC1
+// M-07. FR-04 AC1
 func TestEntrypoint_CapturesBodyAndTimestamp(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, _ := newTestModule(t, testRules(), clock)
@@ -65,7 +65,7 @@ func TestEntrypoint_CapturesBodyAndTimestamp(t *testing.T) {
 	assert.Equal(t, body, capture.body)
 }
 
-// FR-04 AC2
+// M-08. FR-04 AC2
 func TestEntrypoint_CopiesBody(t *testing.T) {
 	m, _ := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := []byte(`{"id":"original"}`)
@@ -82,7 +82,7 @@ func TestEntrypoint_CopiesBody(t *testing.T) {
 	assert.JSONEq(t, `{"id":"original"}`, string(capture.body))
 }
 
-// FR-14
+// M-26. FR-14
 func TestEntrypoint_IgnoresNonAuctionEndpoint(t *testing.T) {
 	m, _ := newTestModule(t, testRules(), newFakeClock(testStart))
 
@@ -95,7 +95,7 @@ func TestEntrypoint_IgnoresNonAuctionEndpoint(t *testing.T) {
 	}
 }
 
-// FR-03 AC1
+// M-05. FR-03 AC1
 func TestProcessedAuction_StartsTraceForMatchingAccount(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, _ := newTestModule(t, testRules(), clock)
@@ -114,7 +114,7 @@ func TestProcessedAuction_StartsTraceForMatchingAccount(t *testing.T) {
 	assert.Equal(t, 1, st.Packets)
 }
 
-// FR-04 AC1: the entrypoint capture becomes incoming_request.
+// M-07. FR-04 AC1: the entrypoint capture becomes incoming_request.
 func TestProcessedAuction_AttachesEntrypointCapture(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, _ := newTestModule(t, testRules(), clock)
@@ -136,7 +136,7 @@ func TestProcessedAuction_AttachesEntrypointCapture(t *testing.T) {
 	assert.True(t, p.StartedAt.Equal(testStart.Add(50*time.Millisecond)), "trace start is the trigger time")
 }
 
-// FR-03 AC1 / FR-13
+// M-05. FR-03 AC1 / FR-13
 func TestProcessedAuction_NoTraceForUnknownAccount(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 
@@ -148,7 +148,7 @@ func TestProcessedAuction_NoTraceForUnknownAccount(t *testing.T) {
 	assert.Empty(t, out.Lines())
 }
 
-// FR-04 AC3
+// M-09. FR-04 AC3
 func TestProcessedAuction_FallsBackWhenEntrypointCaptureMissing(t *testing.T) {
 	// a clock that advances on every read exposes any second now() taken after Tracer.Begin
 	cur := testStart
@@ -173,7 +173,7 @@ func TestProcessedAuction_FallsBackWhenEntrypointCaptureMissing(t *testing.T) {
 	assert.JSONEq(t, string(want), string(p.IncomingRequest.Body))
 }
 
-// FR-10 via the hook path
+// M-21. FR-10 via the hook path
 func TestProcessedAuction_RespectsStopConditions(t *testing.T) {
 	m, _ := newTestModule(t, []Rule{{PartnerID: sampleRequestAccountID, Duration: time.Hour, TracePacketsAmount: 1}}, newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -185,7 +185,7 @@ func TestProcessedAuction_RespectsStopConditions(t *testing.T) {
 	assert.Nil(t, traceIn(second))
 }
 
-// FR-05 AC1
+// M-10. FR-05 AC1
 func TestBidderRequest_RecordsOutgoingRequestForTracedAuction(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, _ := newTestModule(t, testRules(), clock)
@@ -209,7 +209,7 @@ func TestBidderRequest_RecordsOutgoingRequestForTracedAuction(t *testing.T) {
 	assert.JSONEq(t, string(want), string(p.BidderRequests[0].Request))
 }
 
-// FR-05 AC3 / FR-15
+// M-06, M-12. FR-05 AC3 / FR-15
 func TestBidderRequest_IsNoopWithoutActiveTrace(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -223,7 +223,7 @@ func TestBidderRequest_IsNoopWithoutActiveTrace(t *testing.T) {
 	assert.Empty(t, out.Lines())
 }
 
-// FR-06 AC1
+// M-13. FR-06 AC1
 func TestRawBidderResponse_RecordsIncomingResponse(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, _ := newTestModule(t, testRules(), clock)
@@ -245,7 +245,7 @@ func TestRawBidderResponse_RecordsIncomingResponse(t *testing.T) {
 	assert.Equal(t, 3.14, p.BidderResponses[0].Response.Bids[0].Bid.Price)
 }
 
-// FR-07 AC1
+// M-15. FR-07 AC1
 func TestAuctionResponse_RecordsFinalResponse(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, _ := newTestModule(t, testRules(), clock)
@@ -264,7 +264,7 @@ func TestAuctionResponse_RecordsFinalResponse(t *testing.T) {
 	assert.Contains(t, string(p.FinalResponse.Body), `"final-1"`)
 }
 
-// FR-08 AC1 / FR-05 / FR-06 / FR-07 end-to-end through the hooks
+// M-16. FR-08 AC1 / FR-05 / FR-06 / FR-07 end-to-end through the hooks
 func TestExitpoint_EmitsSinglePacketWithAllSections(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, out := newTestModule(t, testRules(), clock)
@@ -287,7 +287,7 @@ func TestExitpoint_EmitsSinglePacketWithAllSections(t *testing.T) {
 	assert.Contains(t, string(p.FinalResponse.Body), `"seat":"appnexus"`)
 }
 
-// FR-06 AC2: a bidder without raw_bidder_response (HTTP 204) still yields a packet.
+// M-14. FR-06 AC2: a bidder without raw_bidder_response (HTTP 204) still yields a packet.
 func TestExitpoint_EmitsPacketWhenBidderReturnedNoResponse(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -309,7 +309,7 @@ func TestExitpoint_EmitsPacketWhenBidderReturnedNoResponse(t *testing.T) {
 	assert.NotNil(t, packets[0].FinalResponse)
 }
 
-// FR-07 AC2
+// M-15. FR-07 AC2
 func TestExitpoint_UsesExitpointResponseWhenAvailable(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, out := newTestModule(t, testRules(), clock)
@@ -331,7 +331,7 @@ func TestExitpoint_UsesExitpointResponseWhenAvailable(t *testing.T) {
 	assert.True(t, packets[0].CompletedAt.Equal(testStart.Add(time.Second)))
 }
 
-// FR-07 AC2 (fallback branch)
+// M-15. FR-07 AC2 (fallback branch)
 func TestExitpoint_FallsBackToAuctionResponseWhenPayloadIsNotBidResponse(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	mc := tracedContext(t, m, sampleRequestAccountID, loadSampleRequest(t))
@@ -349,7 +349,7 @@ func TestExitpoint_FallsBackToAuctionResponseWhenPayloadIsNotBidResponse(t *test
 	assert.Contains(t, string(packets[0].FinalResponse.Body), `"from-auction-response"`)
 }
 
-// FR-08 AC4 / FR-13
+// M-06, M-18. FR-08 AC4 / FR-13
 func TestExitpoint_EmitsNothingWithoutActiveTrace(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 
@@ -361,7 +361,7 @@ func TestExitpoint_EmitsNothingWithoutActiveTrace(t *testing.T) {
 	assert.Empty(t, out.Lines())
 }
 
-// FR-08 AC3 / NFR-02
+// M-17. FR-08 AC3 / NFR-02
 func TestExitpoint_DoesNotEmitTwice(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	mc := runFullAuction(t, m, sampleRequestAccountID, loadSampleRequest(t), []string{"appnexus"}, sampleBidResponse("r", "appnexus"))
@@ -374,7 +374,7 @@ func TestExitpoint_DoesNotEmitTwice(t *testing.T) {
 	assert.Nil(t, traceIn(mc), "trace must be released from the module context after emission")
 }
 
-// FR-15 AC1
+// M-27. FR-15 AC1
 func TestHooks_NeverRejectNeverMutate(t *testing.T) {
 	m, _ := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -423,7 +423,7 @@ func TestHooks_NeverRejectNeverMutate(t *testing.T) {
 	assert.Empty(t, exit.ChangeSet.Mutations())
 }
 
-// FR-15 AC3
+// M-29. FR-15 AC3
 func TestHooks_ToleratesNilModuleContextAndNilPayloads(t *testing.T) {
 	m, _ := newTestModule(t, testRules(), newFakeClock(testStart))
 	ctx := t.Context()
@@ -458,7 +458,7 @@ func TestHooks_ToleratesNilModuleContextAndNilPayloads(t *testing.T) {
 	})
 }
 
-// FR-14 AC1
+// M-26. FR-14 AC1
 func TestModule_TracesOnlyAuctionEndpoint(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -480,5 +480,16 @@ func TestModule_TracesOnlyAuctionEndpoint(t *testing.T) {
 	assert.Nil(t, traceIn(mc))
 	_, found := m.tracer.Status(sampleRequestAccountID)
 	assert.False(t, found, "other endpoints must not consume the partner's packet budget")
+	assert.Empty(t, out.Lines())
+}
+
+// M-03. FR-02 AC2: an empty rule set is valid and makes the module a no-op for every account.
+func TestModule_EmptyRuleSetTracesNothing(t *testing.T) {
+	m, out := newTestModule(t, nil, newFakeClock(testStart))
+	f := newBenchFixture(t)
+
+	for _, account := range []string{sampleRequestAccountID, "partner-two", ""} {
+		runAuctionForBench(m, account, f)
+	}
 	assert.Empty(t, out.Lines())
 }

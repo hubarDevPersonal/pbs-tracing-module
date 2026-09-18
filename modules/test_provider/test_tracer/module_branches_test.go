@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// FR-14: an active trace must not be touched by invocations for another endpoint.
+// M-26. FR-14: an active trace must not be touched by invocations for another endpoint.
 func TestHooks_IgnoreOtherEndpointEvenWithActiveTrace(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -44,7 +44,7 @@ func TestHooks_IgnoreOtherEndpointEvenWithActiveTrace(t *testing.T) {
 	assert.Empty(t, out.Lines())
 }
 
-// FR-15 AC3: nil payload fields inside a traced request are skipped, never fatal.
+// M-29. FR-15 AC3: nil payload fields inside a traced request are skipped, never fatal.
 func TestHooks_NilPayloadsInsideTracedRequestAreSkipped(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -69,7 +69,7 @@ func TestHooks_NilPayloadsInsideTracedRequestAreSkipped(t *testing.T) {
 	assert.Nil(t, packets[0].FinalResponse)
 }
 
-// FR-15 AC2: an output failure is logged, not returned; the auction is unaffected.
+// M-28. FR-15 AC2: an output failure is logged, not returned; the auction is unaffected.
 func TestExitpoint_EmitFailureDoesNotFailTheHook(t *testing.T) {
 	m, err := newModule(testRules(), newJSONEmitter(failingWriter{err: errors.New("stdout closed")}), newFakeClock(testStart).Now)
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestExitpoint_EmitFailureDoesNotFailTheHook(t *testing.T) {
 	assert.Nil(t, traceIn(mc), "state is released even when the write failed")
 }
 
-// FR-06 / D10: optional TypedBid parts and FLEDGE configs are carried into the DTO.
+// M-13. FR-06 / D10: optional TypedBid parts and FLEDGE configs are carried into the DTO.
 func TestAuctionTrace_BidderResponseSnapshotCoversOptionalFields(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
 	trace, ok := tr.Begin(sampleRequestAccountID, "a")
@@ -121,7 +121,7 @@ func TestAuctionTrace_BidderResponseSnapshotCoversOptionalFields(t *testing.T) {
 	assert.True(t, json.Valid(raw))
 }
 
-// FR-04: a non-JSON entrypoint body must not break the packet.
+// M-09. FR-04: a non-JSON entrypoint body must not break the packet.
 func TestAuctionTrace_NonJSONIncomingBodyIsWrappedAsString(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
 	trace, ok := tr.Begin(sampleRequestAccountID, "a")
@@ -140,7 +140,7 @@ func TestAuctionTrace_NonJSONIncomingBodyIsWrappedAsString(t *testing.T) {
 	assert.Equal(t, "this is not json", obj.IncomingRequest.Body)
 }
 
-// FR-08 AC5 via the hooks: mixed-zone clock still yields UTC output.
+// M-19. FR-08 AC5 via the hooks: mixed-zone clock still yields UTC output.
 func TestExitpoint_NormalisesTimestampsToUTC(t *testing.T) {
 	zone := time.FixedZone("EEST", 3*3600)
 	clock := newFakeClock(time.Date(2026, 9, 16, 13, 0, 0, 0, zone))

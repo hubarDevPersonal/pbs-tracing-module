@@ -19,13 +19,13 @@ func newTestTracer(t *testing.T, rules []Rule, clock *fakeClock) *Tracer {
 	return tr
 }
 
-// FR-02
+// M-02. FR-02
 func TestNewTracer_RejectsInvalidRules(t *testing.T) {
 	_, err := newTracer([]Rule{{PartnerID: "", Duration: time.Second, TracePacketsAmount: 1}}, time.Now)
 	assert.Error(t, err)
 }
 
-// FR-03 / FR-13
+// M-05. FR-03 / FR-13
 func TestTracerBegin_UnknownPartnerIsNotTraced(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
 
@@ -37,7 +37,7 @@ func TestTracerBegin_UnknownPartnerIsNotTraced(t *testing.T) {
 	assert.False(t, found, "unknown partners must not allocate state")
 }
 
-// FR-03 / FR-09: the first traced request opens the window.
+// M-20. FR-03 / FR-09: the first traced request opens the window.
 func TestTracerBegin_FirstPacketStartsWindow(t *testing.T) {
 	clock := newFakeClock(testStart)
 	tr := newTestTracer(t, testRules(), clock)
@@ -57,7 +57,7 @@ func TestTracerBegin_FirstPacketStartsWindow(t *testing.T) {
 	assert.Equal(t, StopReasonNone, st.StopReason)
 }
 
-// FR-10
+// M-21. FR-10
 func TestTracerBegin_AmountLimitStopsTracing(t *testing.T) {
 	clock := newFakeClock(testStart)
 	tr := newTestTracer(t, []Rule{{PartnerID: "p", Duration: time.Hour, TracePacketsAmount: 2}}, clock)
@@ -78,7 +78,7 @@ func TestTracerBegin_AmountLimitStopsTracing(t *testing.T) {
 	assert.Equal(t, StopReasonAmount, st.StopReason)
 }
 
-// FR-09: stop when elapsed > Duration (strictly "exceeds").
+// M-20. FR-09: stop when elapsed > Duration (strictly "exceeds").
 func TestTracerBegin_DurationLimitStopsTracing(t *testing.T) {
 	clock := newFakeClock(testStart)
 	tr := newTestTracer(t, []Rule{{PartnerID: "p", Duration: 10 * time.Second, TracePacketsAmount: 100}}, clock)
@@ -99,7 +99,7 @@ func TestTracerBegin_DurationLimitStopsTracing(t *testing.T) {
 	assert.Equal(t, StopReasonDuration, st.StopReason)
 }
 
-// FR-11: whichever condition is met first wins.
+// M-23. FR-11: whichever condition is met first wins.
 func TestTracerBegin_WhicheverComesFirst(t *testing.T) {
 	t.Run("duration before amount", func(t *testing.T) {
 		clock := newFakeClock(testStart)
@@ -125,7 +125,7 @@ func TestTracerBegin_WhicheverComesFirst(t *testing.T) {
 	})
 }
 
-// FR-11 AC1
+// M-23. FR-11 AC1
 func TestTracerBegin_StoppedPartnerDoesNotRearm(t *testing.T) {
 	clock := newFakeClock(testStart)
 	tr := newTestTracer(t, []Rule{{PartnerID: "p", Duration: time.Second, TracePacketsAmount: 1}}, clock)
@@ -141,7 +141,7 @@ func TestTracerBegin_StoppedPartnerDoesNotRearm(t *testing.T) {
 	assert.Equal(t, 1, st.Packets)
 }
 
-// FR-11 AC2
+// M-23. FR-11 AC2
 func TestTracerBegin_PartnersAreIndependent(t *testing.T) {
 	clock := newFakeClock(testStart)
 	tr := newTestTracer(t, []Rule{
@@ -162,7 +162,7 @@ func TestTracerBegin_PartnersAreIndependent(t *testing.T) {
 	assert.False(t, okB3)
 }
 
-// FR-04..FR-07 / spec §5
+// M-16. FR-04..FR-07 / spec §5
 func TestAuctionTrace_PacketContainsAllSections(t *testing.T) {
 	clock := newFakeClock(testStart)
 	rule := Rule{PartnerID: "p", Duration: 10 * time.Minute, TracePacketsAmount: 3}
@@ -216,7 +216,8 @@ func TestAuctionTrace_PacketContainsAllSections(t *testing.T) {
 	assert.Equal(t, "appnexus", final.SeatBid[0].Seat)
 }
 
-// spec §5: arrays are never null even when nothing was collected.
+// M-16. spec §5: arrays are never null even when nothing was collected.
+// FR-08 AC2 / spec §5: bidder_requests and bidder_responses are [] when empty, never null.
 func TestAuctionTrace_EmptyPacketHasEmptyArrays(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
 	trace, ok := tr.Begin(sampleRequestAccountID, "a")
@@ -231,7 +232,7 @@ func TestAuctionTrace_EmptyPacketHasEmptyArrays(t *testing.T) {
 	assert.JSONEq(t, `[]`, string(asMap["bidder_responses"]))
 }
 
-// FR-05 AC1 / FR-04 AC2: inputs are snapshotted at call time.
+// M-08, M-10. FR-05 AC1 / FR-04 AC2: inputs are snapshotted at call time.
 func TestAuctionTrace_SnapshotsAreImmutable(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
 	trace, ok := tr.Begin(sampleRequestAccountID, "a")
@@ -260,7 +261,7 @@ func TestAuctionTrace_SnapshotsAreImmutable(t *testing.T) {
 	assert.Contains(t, string(p.FinalResponse.Body), `"before"`)
 }
 
-// FR-05 AC2
+// M-11. FR-05 AC2
 func TestAuctionTrace_PreservesInvocationOrder(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
 	trace, ok := tr.Begin(sampleRequestAccountID, "a")
@@ -284,7 +285,7 @@ func TestAuctionTrace_PreservesInvocationOrder(t *testing.T) {
 	assert.Equal(t, []string{"aceex", "appnexus", "amx", "adyoulike"}, respOrder)
 }
 
-// FR-15 AC3
+// M-29. FR-15 AC3
 func TestAuctionTrace_NilInputsAreSafe(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
 	trace, ok := tr.Begin(sampleRequestAccountID, "a")

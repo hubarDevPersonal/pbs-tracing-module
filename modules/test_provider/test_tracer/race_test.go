@@ -16,7 +16,7 @@ import (
 // Concurrency tests follow PBS convention (docs/developers/automated-tests.md): names start with TestRace
 // and are executed by validate.sh under the race detector.
 
-// FR-10 AC2 / FR-16
+// M-22. FR-10 AC2 / FR-16
 func TestRaceTracerBeginNeverExceedsAmount(t *testing.T) {
 	const amount = 10
 	const attempts = 500
@@ -42,7 +42,7 @@ func TestRaceTracerBeginNeverExceedsAmount(t *testing.T) {
 	assert.Equal(t, StopReasonAmount, st.StopReason)
 }
 
-// FR-16 AC1
+// M-30. FR-16 AC1
 func TestRaceAuctionTraceConcurrentAppends(t *testing.T) {
 	tr, err := newTracer(testRules(), time.Now)
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestRaceAuctionTraceConcurrentAppends(t *testing.T) {
 	assert.Len(t, p.BidderResponses, n)
 }
 
-// FR-16 AC1: per-bidder hooks of one request run in parallel goroutines in PBS.
+// M-30. FR-16 AC1: per-bidder hooks of one request run in parallel goroutines in PBS.
 func TestRaceModuleConcurrentBidderHooks(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -105,7 +105,7 @@ func TestRaceModuleConcurrentBidderHooks(t *testing.T) {
 	assert.Len(t, packets[0].BidderResponses, bidders)
 }
 
-// FR-16 AC2: concurrent requests reaching exitpoint at once never interleave output lines.
+// M-31. FR-16 AC2: concurrent requests reaching exitpoint at once never interleave output lines.
 func TestRaceJSONEmitterConcurrentEmits(t *testing.T) {
 	out := &syncBuffer{}
 	em := newJSONEmitter(out)
@@ -130,7 +130,7 @@ func TestRaceJSONEmitterConcurrentEmits(t *testing.T) {
 	assert.Len(t, seen, n)
 }
 
-// FR-16: many concurrent requests for several partners through the full hook path.
+// M-30. FR-16: many concurrent requests for several partners through the full hook path.
 func TestRaceModuleConcurrentRequests(t *testing.T) {
 	rules := []Rule{
 		{PartnerID: "p1", Duration: time.Hour, TracePacketsAmount: 5},

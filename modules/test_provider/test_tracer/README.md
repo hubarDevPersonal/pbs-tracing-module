@@ -76,7 +76,7 @@ From the repository root: `make docker-build` (PBS at the pinned commit + this m
 
 ```bash
 make test                                                     # from the repository root, no PBS checkout needed
-go test ./internal/testtracer -race -run '^TestRace' -count 3
+go test ./modules/test_provider/test_tracer -race -run '^TestRace' -count 3
 ```
 
 ## Maintainer
