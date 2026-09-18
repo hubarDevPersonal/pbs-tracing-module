@@ -50,13 +50,51 @@ with live bidders the module would record stage 2 (outgoing requests) but not st
 
 Direct calls to `http://ib.adnxs.com/openrtb2` with the exact body PBS sent, and with variants (no IP/geo, no user, minimal
 request, other placement ids, `hb_source` 1/2, member + inv_code, `test: 0`) all returned 204 from this network (egress: Portugal).
-The test placement may be region-gated or retired; the reviewer's network may behave differently.
+Resolved in §2.3.1: the placement serves only a zero-price creative over the Prebid.js protocol and the documented test placement is decommissioned; the network does not matter.
 
 E2E stays **live** (decision of the assignment owner: no mocks). A probe of 17 bidders with the test/example parameters published
 in the Prebid docs (2026-09-17, `test: 1`) found one that returns a real bid from its production endpoint from this network:
 **onetag** with `pubId: "386276e072"` answers HTTP 200 with a $2.00 banner (`crid: "test-creative"`), 5/5 attempts. The others:
 appnexus, criteo, pubmatic, sovrn, sharethrough, triplelift, yieldmo, gumgum, improvedigital, medianet → 204; openx → `nbr: 1`;
 smaato 422, smartadserver 403, adtelligent 400; 33across DNS failure; adnuntius 200 without a usable bid.
+
+#### 2.3.1 Why the sample bidders never bid — investigation record (2026-09-17/18)
+
+Tried from three networks: Portugal (residential), Finland (Hetzner datacenter), United States (New Jersey, Proton VPN).
+Protocols: OpenRTB `/openrtb2` (what PBS uses), the Prebid.js "UT" protocol `/ut/v3/prebid`, and Xandr's sandbox hosts.
+
+**What the bidders' documentation offers**
+
+| Bidder | Documented test path | PBS adapter | Outcome |
+|--------|---------------------|-------------|---------|
+| appnexus | PBS test placement `13144370` with sizes 600×500 / 300×600; nothing about `test: 1`, nothing about no-bid | OpenRTB to `ib.adnxs.com/openrtb2` | see below |
+| amx | `testMode: true` + `tagId cHJlYmlkLm9yZw` → $10 test creative, **Prebid.js only** | OpenRTB to `pbs.amxrtb.com`; `testMode` forwarded in `imp.ext.bidder`, ignored | 204 everywhere; the Prebid.js endpoint does bid ($1.00, `crid TEST`) but PBS cannot use it |
+| adyoulike | only `placement`, "requires setup and approval from the Adyoulike team" | `hb-ss.omnitagjs.com/broker/bid` with the host's `partnerId` | 204 for any id, any media type, all networks |
+| aceex | "requires setup, contact tech@aceex.io" | `bl-us.aceex.io/?uqhash=` | 204 for any id, all networks |
+
+**appnexus in detail**
+
+| Placement | OpenRTB `/openrtb2` (PT / FI / US) | UT `/ut/v3/prebid?test=1` (US) |
+|-----------|-----------------------------------|-------------------------------|
+| `12883451` (assessment) | 204 in every variant: `test` 0/1, `hb_source` 1/5/none, with/without device IP; 30-request bursts | `nobid: false`, creative `91227444` by member `3532`, 300×250, **`cpm: 0.0`** |
+| `13144370` (documented PBS test placement) | 204 | `{"error": "Member 9325 not enabled for selling (no contract)"}` |
+| `13232354`, `13232361`, `13232385` | 204 | `nobid: true` |
+| `10433394` with `disable_psa: false` | 204 | `nobid: false`, a PSA at `cpm: 0` |
+
+Sandbox hosts (`sand-ib.adnxs.com`, `test.adnxs.com`, `ib.adnxs-simple.com`) serve both protocols and answer the same; using them
+for real requires sandbox member/placement ids from a Xandr account. 200 direct + 65 PBS-routed requests gave no bid at any point,
+so this is not fill rate.
+
+**Conclusion.** The assessment placement's only ad is a zero-price house creative that Xandr serves over the Prebid.js protocol;
+the OpenRTB endpoint PBS uses returns 204 for it, and PBS would in any case drop a `price: 0` bid without a deal id
+(`exchange/bidder_validate_bids.go`; the `raw_bidder_response` hook would have fired first). The documented test placement is
+decommissioned. The README's `test: 1` premise therefore cannot be reproduced today from any network via Prebid Server; the only
+normative text is the PBS endpoint documentation — the `test` flag means bidders "may not perform a normal auction", never that a
+bid is guaranteed — and 204 is the adapter contract for no-bid. Getting a bid from adyoulike, aceex or appnexus requires ids
+issued by them.
+
+Practical notes for anyone repeating this: Proton VPN's resolver returns NXDOMAIN for ad-tech domains even with NetShield on
+"Don't block" — resolve via `8.8.8.8` (`docker run --dns 8.8.8.8` for PBS, `--resolve`/Host header for direct calls).
 
 Consequences for verification (`scripts/e2e-*.sh`, assertions via `cmd/tracecheck`):
 
