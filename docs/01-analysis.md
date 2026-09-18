@@ -58,6 +58,21 @@ in the Prebid docs (2026-09-17, `test: 1`) found one that returns a real bid fro
 appnexus, criteo, pubmatic, sovrn, sharethrough, triplelift, yieldmo, gumgum, improvedigital, medianet → 204; openx → `nbr: 1`;
 smaato 422, smartadserver 403, adtelligent 400; 33across DNS failure; adnuntius 200 without a usable bid.
 
+What the bidders' own documentation says (docs.prebid.org bidder pages, checked 2026-09-18):
+
+| Bidder | Documented test path | Tried from this network | Result |
+|--------|---------------------|------------------------|--------|
+| appnexus | PBS test placement `placement_id: 13144370` with sizes **600×500** and **300×600** ("sizes that would match with the test creative"); no statement about `test: 1`, no no-bid reasons | exactly that `imp` through PBS and directly against `ib.adnxs.com`, with `test` 0/1, with and without device/geo/user | 204 every time |
+| amx | `testMode: true` + `tagId: "cHJlYmlkLm9yZw"` → "a bid at $10 with a test creative", **Prebid.js only**; the PBS `amx` adapter has no `testMode` parameter (`static/bidder-params/amx.json`: `tagId`, `adUnitId`) | test `tagId` through PBS | 204 |
+| adyoulike | only `placement`, "requires setup and approval from the Adyoulike team"; no test mode | sample placement | 204 |
+| aceex | "requires setup before beginning, contact tech@aceex.io"; PBS param `accountid`; no test mode | sample account id | 204 |
+
+None of the four pages explains a 204. The only normative statement is in the PBS auction endpoint documentation: the OpenRTB
+`test` flag "has a special meaning that bidders may react to: they may not perform a normal auction, or may not pay for test
+requests" — i.e. it never guarantees a bid; 204 is the adapter contract for "no bid" (`MakeBids` returns nil on
+`http.StatusNoContent`). The README's premise therefore rests on appnexus's test placement serving from the author's network,
+which it does not from ours (all probes above, plus the region hypothesis in §2.3).
+
 Consequences for verification (`scripts/e2e-*.sh`, assertions via `cmd/tracecheck`):
 
 - phase A runs the assessment request **verbatim**: items 1, 2 and 4 asserted strictly; item 3 on shape only (`STRICT_BIDS=1` to enforce);
