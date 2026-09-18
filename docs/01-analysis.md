@@ -67,6 +67,20 @@ What the bidders' own documentation says (docs.prebid.org bidder pages, checked 
 | adyoulike | only `placement`, "requires setup and approval from the Adyoulike team"; no test mode | sample placement | 204 |
 | aceex | "requires setup before beginning, contact tech@aceex.io"; PBS param `accountid`; no test mode | sample account id | 204 |
 
+Fill-rate and sandbox checks (2026-09-18), to rule out intermittent fill and transport:
+
+| Check | Result |
+|-------|--------|
+| 100 × documented test `imp` (13144370, 600×500/300×600) direct to `ib.adnxs.com`, 4 in flight, 20 s timeout | 100 × 204, avg 130 ms, max 397 ms |
+| 100 × the sample placement 12883451 direct | 100 × 204 |
+| 40 × the assessment request through PBS | 40 × 204 for all four bidders, no seatbid |
+| Prebid.js protocol `POST /ut/v3/prebid?test=1` for 13144370 on `ib.adnxs.com` | 200 with `{"tag_id":13144370,"nobid":true}` — an explicit no-bid from Xandr, not a transport artefact |
+| Xandr test hosts (`sand-ib.adnxs.com`, `test.adnxs.com`, `ib.adnxs-simple.com`; `ib-test.adnxs.com` and `api-test.adnxs.com` answer 404) | serve both protocols; OpenRTB 204 and `nobid: true` for both placements, http and https |
+| amx `testMode: true` through PBS (the adapter forwards `imp.ext.bidder` unchanged) | 204 — the PBS endpoint does not honour the Prebid.js test flag |
+
+Conclusion: the appnexus test placement has no creative to serve to requests originating here; using Xandr's sandbox
+hosts requires sandbox member/placement ids that only come with a Xandr account.
+
 None of the four pages explains a 204. The only normative statement is in the PBS auction endpoint documentation: the OpenRTB
 `test` flag "has a special meaning that bidders may react to: they may not perform a normal auction, or may not pay for test
 requests" — i.e. it never guarantees a bid; 204 is the adapter contract for "no bid" (`MakeBids` returns nil on
