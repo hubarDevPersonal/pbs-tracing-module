@@ -150,7 +150,7 @@ Checked on 2026-09-16 against the two pages referenced by the assessment:
 | D10 | Bidder response representation | marshal `adapters.BidderResponse` | **explicit snake_case DTO** | `adapters.BidderResponse` / `TypedBid` have no JSON tags. |
 | D11 | Amount limit under concurrent requests | count on completion / reserve on start | **reserve the slot at trigger time** | Guarantees the count never exceeds `TracePacketsAmount` even with parallel requests. |
 | D12 | Endpoint scoping | rely on plan / check in module | **both** — module ignores `miCtx.Endpoint != "/openrtb2/auction"` | Defence in depth; costs one string compare. |
-| D13 | Traces whose `exitpoint` never runs (early 4xx/5xx) | print partial / drop | **drop** and log a warning to stderr | Rare; a partial packet has no final response by definition. |
+| D13 | Traces whose `exitpoint` never runs (early 4xx/5xx) | print partial / drop | **drop**; the reserved packet slot stays consumed | Rare; a partial packet has no final response by definition. There is no hook PBS invokes on the 500 path (`auction.go` returns before `sendAuctionResponse`), so the module cannot detect the loss; see §5 item 6. |
 
 ## 5. Risks and open questions for the reviewer
 
@@ -159,3 +159,15 @@ Checked on 2026-09-16 against the two pages referenced by the assessment:
 3. The sample's four bidders return 204 from this network; item 3 is proven live through phase B of the e2e (onetag test publisher) and at unit/integration level. The assessment request itself stays unchanged in phase A.
 4. Hook timeouts are generous (120 s) in the provided config; the module still keeps hooks allocation-light and non-blocking except for the stdout write.
 5. The provided `groups` mapping relies on viper's weak typing; harmless today, brittle if PBS tightens decoding.
+6. **Slot consumed without a packet.** `Tracer.Begin` reserves the packet slot at `processed_auction_request`. If `HoldAuction`
+   then fails with a non-reject error, PBS writes 400/500 directly and never runs `auction_response`/`exitpoint`
+   (`endpoints/openrtb2/auction.go`, `writeError` paths), so nothing is printed and the slot is gone; with `TracePacketsAmount: 1`
+   the partner ends stopped with zero packets and never re-arms (FR-11). Accepted for the assessment: the module has no hook on
+   that path. A production version would count the slot at `exitpoint` (allowing brief overshoot under concurrency) or release
+   it via `Shutdowner`-style bookkeeping keyed by request id.
+7. **Trigger is client-controlled.** With `account_required: false` the `Account.ID` PBS resolves is whatever the caller puts in
+   `publisher.ext.prebid.parentAccount` / `publisher.id`, so anyone who knows a `PartnerID` can exhaust its one-shot budget and
+   place arbitrary request bodies into the host's stdout. Inherent to the assessment's configuration; in production the rule set
+   should only reference accounts that exist in the account store with `account_required: true`.
+8. **Broken-pipe on stdout.** The emitter writes to fd 1; Go terminates the process on `EPIPE` for fd 1/2 when nothing handles
+   `SIGPIPE`. Run PBS with stdout redirected to a file or a log driver (both e2e paths do), not through a pipe whose reader may exit.

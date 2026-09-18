@@ -77,7 +77,13 @@ func TestVerify_Failures(t *testing.T) {
 		{name: "wrong packet count", input: packet(1, sampleBidders, true, true), wantErr: "expected 3 trace packets, got 1"},
 		{name: "non-JSON line on stdout", input: "I0916 log line\n" + packet(1, sampleBidders, true, true), wantErr: "only JSON packets"},
 		{name: "wrong partner", input: strings.Replace(packet(1, sampleBidders, true, true), partner, "other", 1), mutate: func(o *Options) { o.ExpectPackets = 1 }, wantErr: "partner_id"},
-		{name: "packet index gap", input: packet(2, sampleBidders, true, true), mutate: func(o *Options) { o.ExpectPackets = 1 }, wantErr: "packet_index 2, want 1"},
+		{name: "packet index gap", input: packet(2, sampleBidders, true, true), mutate: func(o *Options) { o.ExpectPackets = 1 }, wantErr: "packet_index 1 missing"},
+		{
+			name:    "duplicate packet index",
+			input:   packet(1, sampleBidders, true, true) + "\n" + packet(1, sampleBidders, true, true),
+			mutate:  func(o *Options) { o.ExpectPackets = 2 },
+			wantErr: "duplicate packet_index",
+		},
 		{name: "missing bidder", input: packet(1, []string{"appnexus"}, true, true), mutate: func(o *Options) { o.ExpectPackets = 1 }, wantErr: "bidder_requests bidders"},
 		{name: "no debug ext in final response", input: packet(1, sampleBidders, true, false), mutate: func(o *Options) { o.ExpectPackets = 1 }, wantErr: "ext.debug missing"},
 		{name: "wrong auction id", input: packet(1, sampleBidders, true, true), mutate: func(o *Options) { o.ExpectPackets = 1; o.AuctionID = "nope" }, wantErr: "incoming_request.body.id"},
@@ -93,6 +99,18 @@ func TestVerify_Failures(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
+}
+
+// Packets of one partner may complete out of order; two partners may share a file when -partner is disabled.
+func TestVerify_OutOfOrderAndMixedPartners(t *testing.T) {
+	in := packet(2, sampleBidders, true, true) + "\n" + packet(1, sampleBidders, true, true) + "\n" +
+		strings.Replace(packet(1, sampleBidders, true, true), partner, "other", 2) + "\n"
+	opts := defaultOpts()
+	opts.ExpectPackets = 3
+	opts.PartnerID = ""
+	rep, err := Verify(strings.NewReader(in), opts)
+	require.NoError(t, err)
+	assert.Equal(t, 3, rep.Packets)
 }
 
 func TestVerify_DisabledChecks(t *testing.T) {

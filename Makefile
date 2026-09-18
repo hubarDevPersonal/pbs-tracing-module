@@ -1,7 +1,7 @@
 IMAGE   ?= pbs-tracer:local
 PBS_DIR ?= $(HOME)/Dev/prebid-server
 
-.PHONY: help build test bench lint fmt vet tidy docker-build docker-run docker-e2e e2e perf profile install-module clean
+.PHONY: help build test bench cover lint fmt vet tidy docker-build docker-run docker-e2e e2e perf profile install-module clean
 
 help:                    ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -16,7 +16,7 @@ bench:                   ## module hook benchmarks (ns/op, allocs per traced and
 	go test ./internal/testtracer -run '^$$' -bench . -benchmem -count=1
 
 cover:                   ## coverage report for the module package
-	go test ./internal/testtracer -count=1 -coverprofile=bin/cover.out && go tool cover -func=bin/cover.out | tail -1
+	mkdir -p bin && go test ./internal/testtracer -count=1 -coverprofile=bin/cover.out && go tool cover -func=bin/cover.out | tail -1
 
 lint:                    ## golangci-lint (config: .golangci.yml)
 	golangci-lint run ./...
@@ -37,7 +37,7 @@ docker-build:            ## build PBS @ pinned commit + module image (module tes
 	docker build -t $(IMAGE) .
 
 docker-run: docker-build ## run PBS on :8080; trace packets on stdout, PBS logs on stderr
-	docker run --rm -p 8080:8080 -p 6060:6060 $(IMAGE)
+	docker run --rm -p 8080:8080 -p 127.0.0.1:6060:6060 $(IMAGE)
 
 docker-e2e:              ## build image, run container, fire 02-send-bid-request.sh, verify the trace
 	IMAGE=$(IMAGE) scripts/e2e-docker.sh

@@ -8,7 +8,13 @@ services:
     image: pbs-tracer:local
     ports:
       - "8080:8080"
-      - "6060:6060"
+      - "127.0.0.1:6060:6060"   # admin: /debug/pprof, /version — unauthenticated, keep it off the network
+    # trace packets carry the raw requests (IPs, ids, consent): bound and rotate the container log
+    logging: &trace-log
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     # trace packets only: docker compose logs --no-log-prefix pbs 2>/dev/null
 
   pbs-perf:
@@ -18,9 +24,10 @@ services:
     volumes:
       - ./deploy/pbs.perf.yaml:/usr/local/bin/pbs.yaml:ro
     ports:
-      - "8080:8080"   # auction
-      - "6060:6060"   # admin: /debug/pprof, /version
-      - "9100:9100"   # prometheus metrics
+      - "8080:8080"             # auction
+      - "127.0.0.1:6060:6060"   # admin: /debug/pprof, /version — unauthenticated
+      - "127.0.0.1:9100:9100"   # prometheus metrics
+    logging: *trace-log
     dns:
       - 10.213.77.53
     depends_on:
@@ -35,7 +42,7 @@ services:
     volumes:
       - ./deploy/coredns/Corefile:/etc/coredns/Corefile:ro
     ports:
-      - "9153:9153"   # coredns metrics (coredns_cache_hits_total, coredns_dns_request_duration_seconds)
+      - "127.0.0.1:9153:9153"   # coredns metrics (coredns_cache_hits_total, coredns_dns_request_duration_seconds)
     networks:
       pbsnet:
         ipv4_address: 10.213.77.53

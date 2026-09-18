@@ -41,7 +41,10 @@ func TestParseConfig_Errors(t *testing.T) {
 	}{
 		{name: "bad env number", env: map[string]string{"LOADGEN_RPS": "fast"}, want: "LOADGEN_RPS"},
 		{name: "bad env duration", env: map[string]string{"LOADGEN_DURATION": "10"}, want: "LOADGEN_DURATION"},
-		{name: "zero rps", args: []string{"-rps", "0"}, want: "rps must be positive"},
+		{name: "zero rps", args: []string{"-rps", "0"}, want: "rps must be in"},
+		{name: "infinite rps", args: []string{"-rps", "inf"}, want: "rps must be in"},
+		{name: "nan rps", args: []string{"-rps", "nan"}, want: "rps must be in"},
+		{name: "absurd rps", args: []string{"-rps", "1e10"}, want: "rps must be in"},
 		{name: "negative duration", args: []string{"-duration", "-1s"}, want: "duration must be positive"},
 		{name: "too much concurrency", args: []string{"-concurrency", "100000"}, want: "concurrency must be in"},
 		{name: "empty url", args: []string{"-url", ""}, want: "url must not be empty"},

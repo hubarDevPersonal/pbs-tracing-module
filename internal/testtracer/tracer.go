@@ -148,6 +148,9 @@ func (a *AuctionTrace) AuctionID() string { return a.auctionID }
 // PacketIndex returns the 1-based index of this packet within the partner's window.
 func (a *AuctionTrace) PacketIndex() int { return a.packetIndex }
 
+// StartedAt returns the trigger time (processed_auction_request) recorded by Tracer.Begin.
+func (a *AuctionTrace) StartedAt() time.Time { return a.startedAt }
+
 // SetIncomingRequest stores a copy of the raw incoming body and its timestamp (FR-04).
 // A body that is not valid JSON is embedded as a JSON string so the packet stays well-formed.
 func (a *AuctionTrace) SetIncomingRequest(at time.Time, body []byte) {

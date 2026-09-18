@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -33,6 +34,10 @@ type Config struct {
 
 // DefaultMaxResponseBytes is the response size cap used when Config.MaxResponseBytes is 0.
 const DefaultMaxResponseBytes = 4 << 20
+
+// MaxRPS bounds the target rate: above it the ticker interval would be shorter than 1 ms, which is
+// meaningless for an HTTP auction and, past 1e9, would collapse to a non-positive ticker interval.
+const MaxRPS = 1000.0
 
 // ErrResponseTooLarge is returned (as a per-request error) when a response exceeds MaxResponseBytes.
 var ErrResponseTooLarge = errors.New("response exceeds the configured size limit")
@@ -100,6 +105,9 @@ func Run(ctx context.Context, cfg Config, client *http.Client) (Report, error) {
 	if cfg.RPS <= 0 || cfg.Duration <= 0 || cfg.URL == "" {
 		return Report{}, errors.New("loadgen: URL, RPS and Duration are required")
 	}
+	if math.IsInf(cfg.RPS, 0) || math.IsNaN(cfg.RPS) || cfg.RPS > MaxRPS {
+		return Report{}, fmt.Errorf("loadgen: RPS must be a finite number ≤ %v, got %v", MaxRPS, cfg.RPS)
+	}
 	if cfg.Concurrency <= 0 {
 		cfg.Concurrency = 16
 	}
@@ -137,7 +145,7 @@ func Run(ctx context.Context, cfg Config, client *http.Client) (Report, error) {
 	start := time.Now()
 	go func() {
 		defer close(ticks)
-		interval := time.Duration(float64(time.Second) / cfg.RPS)
+		interval := max(time.Duration(float64(time.Second)/cfg.RPS), time.Millisecond) // NewTicker panics on <= 0
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {

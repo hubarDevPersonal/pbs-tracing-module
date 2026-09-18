@@ -2,6 +2,7 @@ package loadgen
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -116,4 +117,8 @@ func TestReadBodyFile(t *testing.T) {
 func TestRun_RejectsInvalidConfig(t *testing.T) {
 	_, err := Run(context.Background(), Config{}, nil)
 	assert.Error(t, err)
+	for _, rps := range []float64{math.Inf(1), math.NaN(), 1e10} {
+		_, err := Run(context.Background(), Config{URL: "http://127.0.0.1:9", Body: []byte(`{}`), RPS: rps, Duration: time.Millisecond}, nil)
+		assert.Error(t, err, "rps %v must be rejected before the ticker is created", rps)
+	}
 }

@@ -150,8 +150,11 @@ func TestProcessedAuction_NoTraceForUnknownAccount(t *testing.T) {
 
 // FR-04 AC3
 func TestProcessedAuction_FallsBackWhenEntrypointCaptureMissing(t *testing.T) {
-	clock := newFakeClock(testStart)
-	m, _ := newTestModule(t, testRules(), clock)
+	// a clock that advances on every read exposes any second now() taken after Tracer.Begin
+	cur := testStart
+	ticking := func() time.Time { cur = cur.Add(time.Microsecond); return cur }
+	m, err := newModule(testRules(), newJSONEmitter(&syncBuffer{}), ticking)
+	require.NoError(t, err)
 	wrapper := requestWrapperFrom(t, loadSampleRequest(t))
 
 	res, err := m.HandleProcessedAuctionHook(t.Context(), auctionCtx(sampleRequestAccountID, nil),
@@ -162,9 +165,9 @@ func TestProcessedAuction_FallsBackWhenEntrypointCaptureMissing(t *testing.T) {
 	trace := traceIn(res.ModuleContext)
 	require.NotNil(t, trace)
 
-	p := trace.Packet(clock.Now())
+	p := trace.Packet(ticking())
 	require.NotNil(t, p.IncomingRequest)
-	assert.True(t, p.IncomingRequest.Timestamp.Equal(testStart))
+	assert.True(t, p.IncomingRequest.Timestamp.Equal(p.StartedAt), "fallback incoming timestamp must be the trace start (FR-04 AC3)")
 	want, err := json.Marshal(wrapper.BidRequest)
 	require.NoError(t, err)
 	assert.JSONEq(t, string(want), string(p.IncomingRequest.Body))

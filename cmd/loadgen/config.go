@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"time"
+
+	"github.com/hubarDevPersonal/pbs-tracing-module/internal/loadgen"
 )
 
 // Defaults are deliberately conservative: the harness drives a Prebid Server that calls live third-party
@@ -106,8 +109,8 @@ func (c config) validate() error {
 		return errors.New("url must not be empty")
 	case c.BodyPath == "":
 		return errors.New("body must not be empty")
-	case c.RPS <= 0:
-		return fmt.Errorf("rps must be positive, got %v", c.RPS)
+	case c.RPS <= 0 || math.IsInf(c.RPS, 0) || math.IsNaN(c.RPS) || c.RPS > loadgen.MaxRPS:
+		return fmt.Errorf("rps must be in (0, %v], got %v", loadgen.MaxRPS, c.RPS)
 	case c.Duration <= 0:
 		return fmt.Errorf("duration must be positive, got %s", c.Duration)
 	case c.Concurrency <= 0 || c.Concurrency > maxConcurrency:

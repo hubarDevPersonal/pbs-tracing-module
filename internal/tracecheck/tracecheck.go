@@ -58,11 +58,28 @@ func Verify(r io.Reader, opts Options) (Report, error) {
 
 	wantBidders := toSet(opts.Bidders)
 	report := Report{Packets: len(packets)}
+	indices := map[string]map[int]bool{} // partner → packet_index values seen
 	for i, p := range packets {
 		if err := checkPacket(i+1, p, opts, wantBidders); err != nil {
 			return Report{}, err
 		}
+		if indices[p.PartnerID] == nil {
+			indices[p.PartnerID] = map[int]bool{}
+		}
+		if indices[p.PartnerID][p.PacketIndex] {
+			return Report{}, fmt.Errorf("packet %d: duplicate packet_index %d for partner %q", i+1, p.PacketIndex, p.PartnerID)
+		}
+		indices[p.PartnerID][p.PacketIndex] = true
 		report.BidderResponses += len(p.BidderResponses)
+	}
+	// packet_index is 1-based per partner and packets are emitted in completion order, so the set per
+	// partner must be exactly 1..N; line order is not asserted (concurrent auctions may complete out of order).
+	for partner, seen := range indices {
+		for n := 1; n <= len(seen); n++ {
+			if !seen[n] {
+				return Report{}, fmt.Errorf("partner %q: packet_index %d missing (got %v)", partner, n, sortedKeys(seen))
+			}
+		}
 	}
 	if opts.StrictBids && len(packets) > 0 && report.BidderResponses == 0 {
 		return Report{}, errors.New("strict-bids: no live bidder response was recorded in any packet")
@@ -104,8 +121,8 @@ func checkPacket(index int, p testtracer.TracePacket, opts Options, wantBidders 
 	if opts.PartnerID != "" && p.PartnerID != opts.PartnerID {
 		return fmt.Errorf("%s: partner_id %q, want %q", pfx, p.PartnerID, opts.PartnerID)
 	}
-	if p.PacketIndex != index {
-		return fmt.Errorf("%s: packet_index %d, want %d", pfx, p.PacketIndex, index)
+	if p.PacketIndex < 1 {
+		return fmt.Errorf("%s: packet_index %d must be ≥ 1", pfx, p.PacketIndex)
 	}
 	if p.StartedAt.IsZero() || p.CompletedAt.Before(p.StartedAt) {
 		return fmt.Errorf("%s: completed_at %s is not after started_at %s", pfx, p.CompletedAt, p.StartedAt)
@@ -298,6 +315,15 @@ func keys(m map[string]struct{}) []string {
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func sortedKeys(m map[int]bool) []int {
+	out := make([]int, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Ints(out)
 	return out
 }
 

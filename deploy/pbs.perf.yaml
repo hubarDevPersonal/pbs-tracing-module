@@ -33,7 +33,7 @@ gdpr:
 account_required: false
 
 account_defaults:
-  debug_allow: true
+  debug_allow: false   # assessment config: true. Anonymous clients must not receive ext.debug.httpcalls; enable per account instead
   events:
     enabled: true
 

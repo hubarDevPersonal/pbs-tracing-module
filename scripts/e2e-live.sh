@@ -26,8 +26,9 @@ PBS_DIR="$PBS_DIR" "$ROOT/scripts/install-module.sh"
 
 log "2/7 start Prebid Server with the provided pbs.yaml (stdout → trace, stderr → log)"
 cp "$ROOT/pbs.yaml" "$PBS_DIR/pbs.yaml"
-( cd "$PBS_DIR" && "$WORK/prebid-server" -stderrthreshold=INFO >"$WORK/trace.ndjson" 2>"$WORK/pbs.log" & echo $! >"$WORK/pbs.pid" )
-PBS_PID="$(cat "$WORK/pbs.pid")"
+# exec makes the backgrounded subshell *become* the server, so $! is its PID and kill/wait work from this shell
+( cd "$PBS_DIR" && exec "$WORK/prebid-server" -stderrthreshold=INFO >"$WORK/trace.ndjson" 2>"$WORK/pbs.log" ) &
+PBS_PID=$!
 for _ in $(seq 1 60); do curl -sf -o /dev/null http://localhost:8080/status && break; sleep 0.5; done
 curl -sf -o /dev/null http://localhost:8080/status || fail "PBS did not come up (see $WORK/pbs.log)"
 
