@@ -17,7 +17,7 @@ const MaxRPS = 1000.0
 // Config describes one load run. Every field is required; Validate reports the first invalid one.
 type Config struct {
 	URL              string        // auction endpoint
-	Body             []byte        // request body sent with every request
+	Bodies           [][]byte      // request bodies, sent round-robin
 	RPS              float64       // target arrival rate
 	Duration         time.Duration // length of the scheduling window
 	Concurrency      int           // maximum in-flight requests
@@ -30,8 +30,8 @@ func (c Config) Validate() error {
 	switch {
 	case c.URL == "":
 		return errors.New("load: URL is required")
-	case len(c.Body) == 0:
-		return errors.New("load: Body is required")
+	case len(c.Bodies) == 0:
+		return errors.New("load: at least one body is required")
 	case c.RPS <= 0 || c.RPS > MaxRPS || math.IsNaN(c.RPS):
 		return fmt.Errorf("load: RPS must be in (0, %v], got %v", MaxRPS, c.RPS)
 	case c.Duration <= 0:

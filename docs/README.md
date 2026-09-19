@@ -18,9 +18,9 @@ Code:
 |------|---------|
 | [../modules/test_provider/test_tracer/](../modules/test_provider/test_tracer/) | The module at the path PBS requires: implementation, module README, unit, race, integration and overhead tests. |
 | [../test/e2e/](../test/e2e/) | End-to-end suite: runs the Docker image, drives live auctions, verifies the trace against the JSON contract. |
-| [../test/load/](../test/load/) | Load suite and its constant-rate driver. |
+| [../test/load/](../test/load/) | Load suite (live bidders), the bench matrix with stub bidders, and the constant-rate driver both use. |
 | [../Dockerfile](../Dockerfile), [../Makefile](../Makefile), [../docker-compose.yml](../docker-compose.yml) | Build PBS (pinned commit) with the module compiled in and the assessment's `pbs.yaml` baked in. |
-| [../deploy/](../deploy/) | `pbs.perf.yaml` tuned configuration and the CoreDNS `Corefile`; wired by the `perf` profile in `docker-compose.yml`. |
+| [../deploy/](../deploy/) | `pbs.perf.yaml` tuned configuration and the CoreDNS `Corefile` (the `perf` profile in `docker-compose.yml`); `pbs.load.yaml`, the same configuration with the bidders pointed at the bench's stub. |
 | [../testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json) | The sample request plus onetag's test publisher under the second rule; exercises bidder responses live. |
 | [../scripts/](../scripts/) | `install-module.sh` (into a PBS checkout), `perf-docker.sh` (load suite + CPU profile + metrics on the perf profile), `profile.sh`. |
 

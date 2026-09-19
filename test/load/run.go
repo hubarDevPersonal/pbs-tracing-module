@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -39,12 +40,14 @@ func Run(ctx context.Context, cfg Config, client *http.Client) (Report, error) {
 		wg      sync.WaitGroup
 		mu      sync.Mutex
 		samples []sample
+		next    atomic.Int64 // round-robin over cfg.Bodies
 	)
 	for range cfg.Concurrency {
 		wg.Go(func() {
 			var own []sample // no shared state on the request path; merged once when the worker ends
 			for range ticks {
-				own = append(own, send(ctx, cfg, client))
+				body := cfg.Bodies[int(next.Add(1)-1)%len(cfg.Bodies)]
+				own = append(own, send(ctx, cfg, client, body))
 			}
 			mu.Lock()
 			samples = append(samples, own...)
@@ -85,10 +88,10 @@ func schedule(ctx context.Context, cfg Config, ticks chan<- struct{}) int {
 
 // send performs one request. It derives from ctx, not from the scheduling window, so a request in
 // flight when the window closes still completes and is counted.
-func send(ctx context.Context, cfg Config, client *http.Client) sample {
+func send(ctx context.Context, cfg Config, client *http.Client, body []byte) sample {
 	reqCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, cfg.URL, bytes.NewReader(cfg.Body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, cfg.URL, bytes.NewReader(body))
 	if err != nil {
 		return sample{err: err}
 	}
@@ -100,15 +103,15 @@ func send(ctx context.Context, cfg Config, client *http.Client) sample {
 		return sample{err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := readLimited(resp.Body, cfg.MaxResponseBytes)
+	respBody, err := readLimited(resp.Body, cfg.MaxResponseBytes)
 	if err != nil {
 		return sample{err: err}
 	}
 
-	s := sample{latency: time.Since(start), status: resp.StatusCode, bytes: len(body)}
+	s := sample{latency: time.Since(start), status: resp.StatusCode, bytes: len(respBody)}
 	// Only a 200 carries a BidResponse; 204 and error statuses have nothing to parse.
 	if resp.StatusCode == http.StatusOK {
-		s.bids = hasBids(body)
+		s.bids = hasBids(respBody)
 	}
 	return s
 }

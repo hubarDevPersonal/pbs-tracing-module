@@ -75,6 +75,11 @@ with bidders, which no PBS hook can see. Their timestamps are hook times.
 Packets go to stdout through a bounded queue (64) drained by one goroutine, so no hook ever waits for stdout. If the queue is full
 the packet is dropped and a warning with the drop count goes to stderr. `Shutdown` (called by PBS on graceful stop) drains the queue.
 
+## Rules
+
+`rules_default.go` holds the production rule set. `rules_loadbench.go` (build tag `loadbench`) replaces it with three partners
+whose limits outlast a load run; only `make load-bench` builds with that tag.
+
 ## Building
 
 From the repository root: `make docker-build` (PBS at the pinned commit + this module), or `PBS_DIR=<pbs> scripts/install-module.sh`
