@@ -4,19 +4,18 @@ Implements [02-specification.md](02-specification.md). PBS facts from [01-analys
 
 ## 1. Package layout
 
-In this repository the package lives at `internal/testtracer`; the Dockerfile and `scripts/install-module.sh` copy it to
-`<pbs>/modules/test_provider/test_tracer` (the path PBS's generator requires). The package imports only PBS and the standard
-library, so the copy is verbatim.
+The package lives at `modules/test_provider/test_tracer`, the path PBS's generator requires, both in this repository and in the
+PBS tree. It imports only PBS and the standard library, so the Dockerfile and `scripts/install-module.sh` copy the directory verbatim.
 
 ```text
-internal/testtracer/          → modules/test_provider/test_tracer/ in the PBS tree
+modules/test_provider/test_tracer/
 ├── module.go            # Builder, Module, the seven hook handlers, module-context keys
 ├── rules.go             # Rule type, hardcoded defaultRules, validateRules
 ├── tracer.go            # Tracer (per-partner state, stop conditions), AuctionTrace (per-request collector)
 ├── output.go            # TracePacket DTOs, Emitter interface, jsonEmitter (NDJSON to io.Writer)
 ├── README.md            # PBS-style module documentation
 ├── testdata/bid_request.json
-├── *_test.go            # unit, integration, race tests (same package)
+├── *_test.go            # unit, integration, race and overhead tests (same package)
 ```
 
 Package name `testtracer` (Go style: no underscores). Directory names are dictated by PBS's generator regex `^([^/]+)/([^/]+)/module.go$`.
@@ -106,8 +105,8 @@ All handlers return `Reject=false`, no mutations, `nil` error (FR-15). Internal 
 
 | Stage | Behaviour |
 |-------|-----------|
-| `entrypoint` | `mc := miCtx.ModuleContext; if mc == nil { mc = hookstage.NewModuleContext() }`; `mc.Set(ctxKeyEntrypoint, entrypointCapture{at: now(), body: bytes.Clone(payload.Body)})`; return `ModuleContext: mc`. Account is unknown here by design (§3.3 of analysis), so no rule evaluation. |
-| `processed_auction_request` | `trace, ok := tracer.Begin(miCtx.AccountID, payload.Request.ID)`; if `!ok` return. Incoming request: use `entrypointCapture` from context if present, else marshal `payload.Request.BidRequest` with `now()`. `mc.Set(ctxKeyTrace, trace)`. If `mc == nil` (plan without entrypoint) create it. |
+| `entrypoint` | If `tracer.Exhausted()` (every partner stopped) return without touching the context. Else `mc := miCtx.ModuleContext; if mc == nil { mc = hookstage.NewModuleContext() }`; `mc.Set(ctxKeyEntrypoint, entrypointCapture{at: now(), body: bytes.Clone(payload.Body)})`; return `ModuleContext: mc`. Account is unknown here by design (§3.3 of analysis), so no rule evaluation. |
+| `processed_auction_request` | Take the `entrypointCapture` out of the context and clear the key, traced or not (NFR-02). `trace, ok := tracer.Begin(miCtx.AccountID, payload.Request.ID, capture.at)`; if `!ok` return. Incoming request: the capture if present, else marshal `payload.Request.BidRequest` with `now()`. `mc.Set(ctxKeyTrace, trace)`. If `mc == nil` (plan without entrypoint) create it. |
 | `bidder_request` | `trace := traceFrom(mc)`; if nil return. `trace.AddBidderRequest(now(), payload.Bidder, payload.Request.BidRequest)`. |
 | `raw_bidder_response` | `trace.AddBidderResponse(now(), payload.Bidder, payload.BidderResponse)`. |
 | `all_processed_bid_responses` | pass-through (returns `ModuleContext: mc`). Present only because the plan lists the stage. |
@@ -159,9 +158,21 @@ sequenceDiagram
 | `Tracer.partners`, `Tracer.rules` | `Begin` from concurrent requests | `Tracer.mu` around the whole decision (check-and-reserve is atomic → FR-10 AC2) |
 | `hookstage.ModuleContext` | executor + hooks | PBS's own `RWMutex`; the module only stores pointers |
 | `AuctionTrace` fields | concurrent `bidder_request` / `raw_bidder_response` goroutines, then `auction_response`, `exitpoint` | `AuctionTrace.mu`; marshalling happens **outside** the lock, append inside |
-| stdout | `exitpoint` of concurrent requests | `jsonEmitter.mu` + single `Write` of the complete line |
+| output queue | `exitpoint` of concurrent requests (producers), one writer goroutine (consumer) | buffered channel of 64 packets; `Emit` is a non-blocking send |
+| stdout | the writer goroutine only | `jsonEmitter.mu` + single `Write` of the complete line |
+| `Tracer.exhausted` | `Begin` when the last partner stops | `atomic.Bool`, read lock-free at `entrypoint` |
 
-No goroutines are created by the module. No channels. No blocking except the `Write`.
+The module creates one goroutine per process: the output writer, started by `Builder` and stopped by `Shutdown`. No hook blocks.
+
+**Stalled stdout.** `exitpoint` enqueues and returns; the writer goroutine is the only one that can block on stdout. When the queue
+is full (stdout stopped draining, or bursts above what it absorbs) the packet is dropped: `Emit` returns `ErrQueueFull`, the hook
+logs it with the running drop count, and the auction response is not delayed. This is the documented trade-off of FR-08 AC1a: the
+alternative, blocking the hook, would hold the client response for as long as the group timeout and park a goroutine per traced
+auction (analysis §3.3). `Shutdown` closes the queue and waits for the writer, so a graceful stop loses nothing that was queued.
+
+**Untraced traffic.** The `entrypoint` copy is the module's only cost before the account is known. It is released at
+`processed_auction_request` for every request, and skipped entirely once `Tracer.Exhausted()` reports that every partner is stopped,
+which with a finite rule set is the steady state of a long-running process.
 
 ## 6. Time
 
@@ -170,7 +181,7 @@ Durations are compared with monotonic-clock-backed `time.Time` values (`Sub`), s
 
 ## 7. Registration and configuration
 
-1. `PBS_DIR=<pbs> scripts/install-module.sh` copies `internal/testtracer` to `<pbs>/modules/test_provider/test_tracer/`.
+1. `PBS_DIR=<pbs> scripts/install-module.sh` copies `modules/test_provider/test_tracer` to the same path in `<pbs>`.
 2. It then runs `go generate ./modules/...` (executes `modules/generator/buildergen.go`) to regenerate `modules/builder.go`; it adds
    `"test_provider": {"test_tracer": test_providerTest_tracer.Builder}`.
 3. Configuration is already present in the provided `pbs.yaml`:
@@ -192,9 +203,11 @@ No account-level configuration is read (`miCtx.AccountConfig` ignored).
 
 ## 9. Performance notes
 
-- Per traced request: 1 body copy + (1 + bidders×2 + 1) JSON marshals + 1 final marshal. Non-traced requests: one map lookup at
-  `processed_auction_request`, one context `Get` per later hook.
-- No allocation for non-traced requests beyond the executor's own `HookResult`.
+- Per traced request: 1 body copy + (1 + bidders×2 + 1) JSON marshals + 1 final marshal + 1 stdout write.
+- Per untraced request: the `entrypoint` body copy, because the account is unknown until `processed_auction_request`; one map lookup
+  there; one module-context `Get` per later hook. No lock is taken: `Tracer.mu` is reached only when the account matches a rule.
+- Rules cap the number of traced auctions per process, so the steady-state cost of the module is the untraced path. Its allocation
+  budget is asserted in the default test suite; timing is measured by the benchmarks (`docs/test-specs/load.md`).
 - Trace memory is released at `exitpoint` by clearing the context key; the `ModuleContext` itself is owned by the executor and dies with the request.
 
 ## 10. Packaging (Docker)

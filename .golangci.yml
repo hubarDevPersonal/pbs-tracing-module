@@ -8,6 +8,8 @@ run:
   allow-parallel-runners: true
   issues-exit-code: 1
   tests: true
+  # lint the e2e and load suites too; they are excluded from the default build
+  build-tags: [e2e, load]
 
 issues:
   max-issues-per-linter: 0

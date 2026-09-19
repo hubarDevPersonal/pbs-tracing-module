@@ -1,3 +1,6 @@
+# Load-bench configuration (test/load, `make load-bench`): the perf configuration with every bidder of the
+# sample request pointed at the stub bidder the bench runs on the host. Do not use outside the bench.
+# Generated from pbs.perf.yaml by hand; keep the two in sync except for the overrides at the end.
 external_url: "http://localhost:8080"
 host: ""
 port: 8080
@@ -154,9 +157,10 @@ stored_responses:
 adapters:
   appnexus:
     platform_id: "platform_id"
-    debug:
-      allow: true
-  colossus:
-    debug:
-      allow: true
- 
+    endpoint: "http://host.docker.internal:18081/appnexus"
+  amx:
+    endpoint: "http://host.docker.internal:18081/amx"
+  adyoulike:
+    endpoint: "http://host.docker.internal:18081/adyoulike"
+  aceex:
+    endpoint: "http://host.docker.internal:18081/aceex"

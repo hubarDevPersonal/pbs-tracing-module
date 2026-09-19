@@ -1,6 +1,6 @@
 # Default profile: the assessment configuration (pbs.yaml baked into the image).
 #   docker compose up --build
-# Perf profile: tuned config + caching DNS sidecar + metrics/pprof ports (docs/06-performance.md).
+# Perf profile: tuned config + caching DNS sidecar + metrics/pprof ports (docs/05-runbook.md §8).
 #   docker compose --profile perf up --build dns pbs-perf   (name the services: pbs has no profile and would also start)
 services:
   pbs:

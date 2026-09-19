@@ -17,13 +17,13 @@ docker run --rm -p 8080:8080 pbs-tracer:local 2>pbs.log | tee trace.ndjson
 sh 02-send-bid-request.sh               # in another terminal; repeat > TracePacketsAmount times
 ```
 
-Each traced auction appears as one JSON line on the container's stdout. `make docker-e2e` does all of this and verifies the result with `cmd/tracecheck`.
+Each traced auction appears as one JSON line on the container's stdout. `make e2e` does all of this and verifies the result (§5).
 
 ## 2. Install the module into a PBS checkout
 
 ```bash
 export PBS_DIR=$HOME/Dev/prebid-server        # your checkout
-scripts/install-module.sh                     # copies internal/testtracer → modules/test_provider/test_tracer, go generate
+scripts/install-module.sh                     # copies modules/test_provider/test_tracer to the same path in PBS_DIR, go generate
 cd "$PBS_DIR" && go vet ./modules/test_provider/... && go build -o prebid-server .
 ```
 
@@ -71,8 +71,8 @@ tail -1 trace.ndjson | python3 -c 'import json,sys; p=json.load(sys.stdin); prin
 # → [('onetag', 1)]
 ```
 
-Automated live run: `make e2e` / `make docker-e2e` — phase A is the assessment request verbatim, phase B is the live-bid request
-with item 3 asserted strictly.
+Automated live run: `make e2e` builds the image and runs the end-to-end suite. Phase A is the assessment request verbatim, phase B
+is the live-bid request with item 3 asserted strictly. Scenarios: [test-specs/e2e.md](test-specs/e2e.md).
 
 ## 6. Verifying hook execution from the HTTP response
 
@@ -84,7 +84,7 @@ for `test_provider.test_tracer`; each invocation should show `"status": "success
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `pbs.log`: `Not found hook while building hook execution plan: test_provider.test_tracer …` on every request | module not compiled in (`builder.go` not regenerated) or `hooks.modules.test_provider.test_tracer.enabled` false | rerun `go generate ./modules/...`, rebuild, check config |
-| PBS exits with `failed to init "test_provider.test_tracer" module: …` | hardcoded rules failed validation | fix `internal/testtracer/rules.go` (empty PartnerID, non-positive Duration/amount, duplicate PartnerID) |
+| PBS exits with `failed to init "test_provider.test_tracer" module: …` | hardcoded rules failed validation | fix `modules/test_provider/test_tracer/rules.go` (empty PartnerID, non-positive Duration/amount, duplicate PartnerID) |
 | No trace line although account matches | partner already stopped (amount/duration) or process restarted mid-window | restart PBS to reset state; check `Duration` in `rules.go` |
 | Trace printed but `bidder_responses: []` | bidders returned 204/error → PBS skipped `raw_bidder_response` | expected for the sample's bidders; use the live-bid request (§5) |
 | `ext.errors.prebid`: `Error sending the request to Prebid Cache: Post "///cache"` | the sample asks for bid caching (`ext.prebid.cache`) and `pbs.yaml` configures no cache host | harmless for tracing; set `cache.host` or drop `ext.prebid.cache` |
@@ -93,3 +93,47 @@ for `test_provider.test_tracer`; each invocation should show `"status": "success
 | Partner stopped with fewer packets than `TracePacketsAmount` | an auction failed with 4xx/5xx after the trace started; PBS skips `exitpoint` on that path, the slot is consumed (analysis §5.6) | restart PBS to reset; check `pbs.log` for `Critical error while running the auction` |
 | PBS exits after a traced auction when stdout is a pipe | reader of the pipe exited → `EPIPE` on fd 1 terminates the process (analysis §5.8) | redirect stdout to a file or use a log driver |
 | `:6060` / `:9100` not reachable from another host | published on `127.0.0.1` only on purpose: pprof and metrics are unauthenticated | use an SSH tunnel or an authenticated reverse proxy |
+
+## 8. Load and the perf profile
+
+The load suite holds a constant auction rate against a running PBS and fails on any transport error, non-2xx status or dropped
+arrival (scenario L-04 in [test-specs/load.md](test-specs/load.md)). It calls live bidders, so keep the rate modest.
+
+```bash
+docker run --rm -d --name pbs -p 8080:8080 pbs-tracer:local
+make load                                                   # 5 auctions/s, 30 s per scenario, against PBS_URL
+go test -tags load -count=1 -v ./test/load -args -pbs-url http://localhost:8080 -rps 10 -duration 60s -concurrency 32
+```
+
+`-concurrency` must stay at or above rate × worst-case latency, otherwise arrivals are dropped and the run fails.
+
+### Bench with stub bidders
+
+`make load-bench` builds `pbs-tracer:loadbench` (the module with the bench rules in
+`modules/test_provider/test_tracer/rules_loadbench.go`, build tag `loadbench`), starts a stub bidder on the host at `:18081`,
+and runs six scenarios against [deploy/pbs.load.yaml](../deploy/pbs.load.yaml), which points the sample's four bidders at the stub:
+hooks off, hooks on with nothing traced, active tracing for one and three partners, a large payload, and a stdout nobody reads
+(scenarios L-05 to L-09 in [test-specs/load.md](test-specs/load.md)). Each scenario gets a fresh container. The comparison table
+is in the test log.
+
+```bash
+make load-bench                                                         # 100 auctions/s, 20 s per scenario
+make load-bench BENCH_ARGS="-args -bench-rps 300 -bench-duration 60s -bench-concurrency 128 -stub-latency 25ms"
+```
+
+Needs Docker and a free port 18081 on the host. The container reaches the stub as `host.docker.internal` (added with
+`--add-host` on Linux). Nothing leaves the machine.
+
+`make perf` runs the same suite against the `perf` profile of `docker-compose.yml`: [deploy/pbs.perf.yaml](../deploy/pbs.perf.yaml)
+(HTTP client pools and dial timeouts, clamped auction timeouts, simulated bidder throttling, Prometheus on `:9100`) and a caching
+CoreDNS sidecar ([deploy/coredns/Corefile](../deploy/coredns/Corefile), metrics on `:9153`). While the load runs it captures a CPU
+profile from the admin port and diffs the Prometheus and CoreDNS counters. The report lands in `$WORK/perf-report.md`.
+
+| Port | What | Exposure |
+|------|------|----------|
+| 6060 | PBS admin: `/debug/pprof`, `/version` | loopback only; unauthenticated |
+| 9100 | PBS Prometheus metrics, perf profile | loopback only |
+| 9153 | CoreDNS metrics, perf profile | loopback only |
+
+`scripts/profile.sh 30` takes a 30 s CPU profile from any running PBS and prints the top frames; `go tool pprof -http=:8081 <file>`
+opens the flame graph.

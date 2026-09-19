@@ -29,58 +29,56 @@ docker run --rm -p 8080:8080 pbs-tracer:local 2>pbs.log | tee trace.ndjson
 sh 02-send-bid-request.sh                           # other terminal; repeat > TracePacketsAmount times
 ```
 
-`make docker-e2e` does the above end to end and verifies the trace with `cmd/tracecheck`.
+`make e2e` builds the image, starts it, sends the requests and checks the trace, the hook outcomes and the PBS log.
 
 ## Repository layout
 
+The repository is the module plus what it takes to build, run and test it. There are no other programs in it.
+
 ```
-cmd/tracecheck/        CLI that verifies an NDJSON trace (used by the e2e scripts and CI-friendly)
-cmd/loadgen/           fixed-rate load generator with latency percentiles (used by scripts/perf-docker.sh)
-internal/testtracer/   the PBS module package — copied verbatim to <pbs>/modules/test_provider/test_tracer at build time
-internal/tracecheck/   verification library behind cmd/tracecheck
-internal/loadgen/      load generator library behind cmd/loadgen
-deploy/                pbs.perf.yaml (tuned config) and the CoreDNS Corefile for the perf profile
-docs/                  assessment text, analysis, specification, design, test plan, runbook
-scripts/               install-module.sh, e2e-live.sh, e2e-docker.sh, perf-docker.sh (load + pprof + metrics), profile.sh
-Dockerfile             multi-stage: clone PBS @ PBS_REF, inject module, go generate, test, build; runtime with pbs.yaml baked in
+modules/test_provider/test_tracer/   the module, at the path PBS requires: copied unchanged into a PBS tree
+test/e2e/                            end-to-end suite (build tag e2e): runs the image, drives live auctions, checks stdout
+test/load/                           load suite (build tag load) and the constant-rate driver it uses
+docs/                                assessment text, analysis, specification, design, test plan, test specifications, runbook
+deploy/                              pbs.perf.yaml (tuned configuration) and the CoreDNS Corefile of the perf profile
+scripts/                             install-module.sh (into a PBS checkout), perf-docker.sh (load + pprof + metrics), profile.sh
+Dockerfile                           clone PBS @ PBS_REF, add the module, go generate, test, build; runtime with pbs.yaml baked in
 pbs.yaml, 01-bid-request-example.json, 02-send-bid-request.sh   assessment inputs, unchanged
 ```
 
-The module package has no dependency on anything else in this repository, which is what lets it be dropped into the upstream
-`modules/` tree unchanged; `go.mod` pins `github.com/prebid/prebid-server/v4` to the same commit the Docker image builds, so
-`go test ./...` and `golangci-lint` run here without a PBS checkout.
+The module imports only PBS and the standard library. `go.mod` pins `github.com/prebid/prebid-server/v4` to the commit the Docker
+image builds, so `go test ./...` and `golangci-lint` run here without a PBS checkout.
 
 ## Development
 
 ```bash
-make test        # go test ./... -race
-make lint        # golangci-lint run (config: .golangci.yml)
+make test        # module unit, race, integration and overhead tests; unit tests of the e2e and load helpers
+make lint        # golangci-lint run, including the e2e and load build tags
 make fmt         # gofumpt + golines
-make cover       # coverage of internal/testtracer
-make e2e         # live e2e against PBS_DIR=~/Dev/prebid-server
-make docker-e2e  # live e2e against the Docker image
-make bench       # module overhead per auction (ns/op, allocs)
-make perf        # perf profile: tuned config + caching DNS sidecar, load run, CPU profile, metric deltas
+make cover       # coverage of the module
+make bench       # module cost per traced and untraced auction (ns/op, allocs)
+make e2e         # build the image and run the end-to-end suite against live bidders
+make load        # load suite against a running PBS (PBS_URL, default http://localhost:8080), live bidders
+make load-bench  # bench matrix against stub bidders: hooks off/on, active tracing, 3 partners, large payload, stalled stdout
+make perf        # load suite on the perf profile (tuned config + DNS cache) with CPU profile and metric deltas
 ```
 
 CI (`.github/workflows/ci.yml`): lint, race tests, coverage, govulncheck (advisory), Docker image build with a `/status` smoke test.
 
 ## Rules
 
-Hardcoded in [internal/testtracer/rules.go](internal/testtracer/rules.go). The sample request resolves to
-`Account.ID = 664-025-677-881` (`site.publisher.ext.prebid.parentAccount`), which is the first rule.
+Hardcoded in [modules/test_provider/test_tracer/rules.go](modules/test_provider/test_tracer/rules.go). The sample request resolves
+to `Account.ID = 664-025-677-881` (`site.publisher.ext.prebid.parentAccount`), which is the first rule.
 
-## Performance and load
+## Testing and load
 
-See [docs/06-performance.md](docs/06-performance.md): where a request spends its time, the PBS knobs that matter
-(`http_client` pools and dialer, adaptive bidder throttling, auction timeouts, GC threshold), DNS caching via a CoreDNS
-sidecar (`docker compose --profile perf`), CPU tracking with pprof on the admin port and Prometheus metrics, and the
-module's measured overhead.
+Strategy: [docs/04-test-plan.md](docs/04-test-plan.md). Scenarios per level, independent of the code:
+[docs/test-specs/](docs/test-specs/). Running the load suite and the perf profile: [docs/05-runbook.md](docs/05-runbook.md) §8.
 
 ## Known behaviour with live bidders
 
 With the sample request all four bidders answer HTTP 204 from this network (also when calling appnexus directly), so Prebid
 Server never invokes `raw_bidder_response` for them. Item 3 is therefore proven live with a second request,
 [testdata/bid-request-live-bid.json](testdata/bid-request-live-bid.json): the sample plus onetag's documented test publisher,
-which returns a real $2.00 test creative. Both e2e drivers run it as phase B with strict assertions; phase A keeps the assessment
-request verbatim. Details: [docs/01-analysis.md](docs/01-analysis.md) §2.3.
+which returns a real $2.00 test creative. The end-to-end suite runs it as phase B with strict assertions; phase A keeps the
+assessment request verbatim. Details: [docs/01-analysis.md](docs/01-analysis.md) §2.3.
