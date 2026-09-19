@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,6 +92,21 @@ func (b *syncBuffer) Packets(t *testing.T) []TracePacket {
 		packets = append(packets, p)
 	}
 	return packets
+}
+
+// blockingWriter blocks every Write until release is closed, like a stdout pipe nobody reads.
+type blockingWriter struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+	writes  atomic.Int64
+}
+
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.entered) })
+	<-w.release
+	w.writes.Add(1)
+	return len(p), nil
 }
 
 type failingWriter struct{ err error }

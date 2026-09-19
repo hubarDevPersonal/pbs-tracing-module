@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/prebid/openrtb/v20/openrtb2"
 	"github.com/prebid/prebid-server/v4/adapters"
@@ -68,7 +69,7 @@ func TestProcessedAuction_FallbackMarshalFailureIsLogged(t *testing.T) {
 // FR-15 AC2: the trace reports marshal failures to the hook, which decides to log them.
 func TestAuctionTrace_MarshalErrorsAreReturned(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
-	trace, ok := tr.Begin(sampleRequestAccountID, "a")
+	trace, ok := tr.Begin(sampleRequestAccountID, "a", time.Time{})
 	require.True(t, ok)
 
 	assert.Error(t, trace.AddBidderRequest(testStart, "b", &openrtb2.BidRequest{ID: "x", Ext: brokenExt}))

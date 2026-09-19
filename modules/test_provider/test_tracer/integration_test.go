@@ -139,7 +139,7 @@ func TestIntegration_InFlightTraceCompletesAfterPartnerStopped(t *testing.T) {
 	require.NoError(t, ex.ExecuteProcessedAuctionStage(requestWrapperFrom(t, body)))
 
 	clock.Advance(5 * time.Second) // window expires while bidders are still being called
-	_, ok := m.tracer.Begin(sampleRequestAccountID, "another")
+	_, ok := m.tracer.Begin(sampleRequestAccountID, "another", time.Time{})
 	require.False(t, ok, "partner must be stopped by now")
 
 	require.Nil(t, ex.ExecuteBidderRequestStage(requestWrapperFrom(t, body), "appnexus"))

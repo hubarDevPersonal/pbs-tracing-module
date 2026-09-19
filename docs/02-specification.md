@@ -42,12 +42,18 @@ A trace starts for a request iff, at `processed_auction_request`, `miCtx.Account
 ### FR-05 Outgoing bidder requests (item 2)
 For every `bidder_request` invocation of a traced request:
 - AC1: Append `{timestamp, bidder, request}` where `request` is the JSON of `payload.Request.BidRequest` **at hook time** (snapshot) and `bidder` is `payload.Bidder`.
+  This is the per-bidder OpenRTB request PBS hands to the adapter, before the adapter's `MakeRequests` may rewrite, split or wrap it
+  into HTTP calls; `timestamp` is the hook time, not the moment bytes leave the socket. What the module can observe is bounded by
+  the hook stages (§6).
 - AC2: Order of entries equals invocation order as observed by the module (concurrent stages ⇒ order is not guaranteed across bidders and is not asserted).
 - AC3: Non-traced requests produce no entry and no allocation beyond a context lookup.
 
 ### FR-06 Incoming bidder responses (item 3)
 For every `raw_bidder_response` invocation of a traced request:
 - AC1: Append `{timestamp, bidder, response}` where `response` is a snapshot of `payload.BidderResponse` in the DTO of §5.
+  This is the adapter's parsed result (`MakeBids`), i.e. the bids PBS goes on to process, not the HTTP body the bidder returned:
+  fields the adapter does not carry over (`id`, `bidid`, `nbr`, response `ext`, …) are not in the trace, and `timestamp` is the
+  hook time, after parsing. One adapter HTTP call yields one entry.
 - AC2: A bidder that PBS never calls `raw_bidder_response` for (HTTP 204, adapter error, timeout) has no entry; the packet is still printed.
 
 ### FR-07 Final auction response (item 4)
@@ -56,14 +62,22 @@ For every `raw_bidder_response` invocation of a traced request:
 - AC3: `final_response.body` is the JSON of the object; PBS debug/trace data under `ext` is included as-is.
 
 ### FR-08 Output
-- AC1: At `exitpoint` of a traced request the module writes exactly one JSON object (§5) followed by `\n` to stdout, in a single `Write` call.
+- AC1: At `exitpoint` of a traced request the module hands exactly one JSON object (§5) to the output; it is written to stdout followed by `\n` in a single `Write` call.
+- AC1a: Output is asynchronous. `exitpoint` enqueues the packet and returns without waiting for stdout. The queue is bounded
+  (64 packets); when it is full the packet is **dropped**, counted and logged to stderr, and the auction is unaffected. Packets of
+  one process are written in the order they were enqueued.
+- AC1b: On graceful shutdown of PBS the module drains the queue before returning, so packets of auctions completed just before the
+  stop are written. Packets still queued when the process is killed are lost.
 - AC2: Output is valid UTF-8 JSON; embedded requests/responses are JSON values, not escaped strings.
 - AC3: A second `exitpoint` invocation for the same request does not print again.
 - AC4: Nothing is printed for non-traced requests.
 - AC5: Timestamps are RFC 3339 with nanosecond precision in UTC (Go `time.RFC3339Nano`).
 
 ### FR-09 Stop condition — time limit
-Let `first` be the timestamp of the partner's first traced request (the `processed_auction_request` time of that request). A new trace is refused when `now - first > Duration`.
+Let `first` be the timestamp of the partner's first traced request: the `entrypoint` time of that request, i.e. the
+`incoming_request.timestamp` it reports (the `processed_auction_request` time when the entrypoint capture is unavailable). A new
+trace is refused when `now - first > Duration`, `now` being the time of the trigger decision. When several first auctions of a
+partner race, the window opens at the incoming timestamp of the one that reserves its slot first.
 - AC1: `now - first == Duration` still traces; `Duration + 1ns` does not.
 - AC2: The partner is marked stopped with reason `duration_exceeded`.
 
@@ -101,8 +115,8 @@ A new trace is refused when the number of traces **started** for the partner equ
 
 | ID | Requirement |
 |----|-------------|
-| NFR-01 | Hook latency: O(size of payload) marshalling only; no network or disk I/O; the only blocking call is the stdout write at `exitpoint`. |
-| NFR-02 | Memory: module-level state bounded by number of rules; per-request state released after `exitpoint` (context key cleared). |
+| NFR-01 | Hook latency: O(size of payload) marshalling only; no network or disk I/O; no hook waits for stdout (FR-08 AC1a). Once every partner is stopped, `entrypoint` no longer copies request bodies. |
+| NFR-02 | Memory: module-level state bounded by number of rules plus the output queue (FR-08 AC1a); the entrypoint body copy is released at `processed_auction_request` for requests that are not traced, and the trace at `exitpoint` for those that are. |
 | NFR-03 | Compatibility: builds with the PBS module's Go version (1.25) and the v4 module path; no new third-party dependencies. |
 | NFR-04 | Code quality: `gofmt`, `go vet` clean; unit tests in the same package; concurrency tests named `TestRace*` per PBS `docs/developers/automated-tests.md`. |
 | NFR-05 | Testability: clock (`func() time.Time`) and output writer (`io.Writer`) are injectable; production wiring uses `time.Now` and `os.Stdout`. |
@@ -167,3 +181,9 @@ are objects; `final_response` is `null` only in the degenerate case where neithe
 - Runtime configuration of rules (account config, YAML), persistence across restarts, re-arming.
 - Truncation, sampling, redaction of PII in traces.
 - Tracing of `all_processed_bid_responses` content (stage is implemented as a pass-through only).
+- The bytes exchanged with bidders over HTTP. PBS module hooks expose the per-bidder OpenRTB request before the adapter builds its
+  HTTP calls and the adapter's parsed result after it read the HTTP response; the HTTP bodies themselves are only available inside
+  the exchange, outside any hook. Capturing them needs a change to PBS core, not a module. Items 2 and 3 are therefore the objects
+  the hooks expose (FR-05, FR-06), and the JSON contract names them `request` and `response` of the bidder stage, not wire data.
+- Guaranteed delivery of every packet. A non-blocking `exitpoint`, bounded memory and no loss with a stdout that never drains cannot
+  all hold at once; the module keeps the first two (FR-08 AC1a).

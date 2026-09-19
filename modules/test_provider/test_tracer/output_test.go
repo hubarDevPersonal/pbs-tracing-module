@@ -114,3 +114,52 @@ func TestJSONEmitter_WriteErrorIsReturned(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, boom)
 }
+
+// M-35. FR-08 AC1 / NFR-01: the asynchronous emitter delivers packets in order without blocking the
+// caller, and Close drains the queue.
+func TestAsyncEmitter_DeliversInOrderAndDrainsOnClose(t *testing.T) {
+	out := &syncBuffer{}
+	em := newAsyncEmitter(newJSONEmitter(out), 8)
+
+	for i := 1; i <= 5; i++ {
+		require.NoError(t, em.Emit(samplePacket(i)))
+	}
+	require.NoError(t, em.Close())
+	require.NoError(t, em.Close(), "Close is idempotent")
+
+	packets := out.Packets(t)
+	require.Len(t, packets, 5)
+	for i, p := range packets {
+		assert.Equal(t, i+1, p.PacketIndex)
+	}
+	assert.ErrorIs(t, em.Emit(samplePacket(6)), ErrEmitterClosed)
+	assert.Zero(t, em.Dropped())
+}
+
+// M-35. NFR-01: with stdout stalled the queue fills up; further packets are dropped and counted, and
+// Emit still returns at once. The queued packets are written once stdout resumes.
+func TestAsyncEmitter_DropsWhenQueueIsFullAndStdoutStalls(t *testing.T) {
+	w := &blockingWriter{entered: make(chan struct{}), release: make(chan struct{})}
+	const queue = 4
+	em := newAsyncEmitter(newJSONEmitter(w), queue)
+
+	require.NoError(t, em.Emit(samplePacket(0))) // taken by the writer, blocked in Write
+	<-w.entered
+	for i := 1; i <= queue; i++ {
+		require.NoError(t, em.Emit(samplePacket(i)), "packet %d fits in the queue", i)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- em.Emit(samplePacket(queue + 1)) }()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, ErrQueueFull)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Emit blocked on a full queue")
+	}
+	assert.EqualValues(t, 1, em.Dropped())
+
+	close(w.release)
+	require.NoError(t, em.Close())
+	assert.EqualValues(t, queue+1, w.writes.Load(), "the blocked packet and the queued ones are written")
+}

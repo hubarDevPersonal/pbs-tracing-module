@@ -163,7 +163,8 @@ module does in each hook.
 - **Timeouts do not stop a hook.** The hook's `ctx` is `context.WithTimeout(context.Background(), groupTimeout)`. It derives from
   `Background`, so neither a client disconnect nor the auction's `tmax` cancels it. When the timer fires first, PBS records a timeout and
   moves on, but the hook goroutine keeps running until the hook returns. A hook that blocks keeps its goroutine and everything it references.
-  This module's only blocking call is the stdout write at `exitpoint`, which does not observe `ctx`.
+  This module therefore never blocks in a hook: `exitpoint` hands the packet to a bounded queue and a writer goroutine owns the
+  stdout write (D14).
   Verified against the pinned commit and against upstream master `d1f5e80d` of 2026-09-17: `hooks/hookexecution/execution.go`
   last changed with the v4 module-path bump (`615e5dfa`, 2026-03-05).
 - `ModuleInvocationContext` is rebuilt for every invocation. `Endpoint` is always set. `AccountID` and `AccountConfig` are set only after `SetAccount` (i.e. from `raw_auction_request` on). `ModuleContext` is the pointer the module returned in a previous stage of the **same request**, or `nil` on first use.
@@ -202,12 +203,14 @@ Checked on 2026-09-16 against the two pages referenced by the assessment:
 |---|-------|---------|----------|-----------|
 | D1 | What is one "trace packet" counted against `TracePacketsAmount`? | (a) one collected event (any of items 1–4); (b) one auction with all its events | **(b)** one auction = one packet | Counting events would cut an auction mid-way and print partial objects; (b) yields coherent JSON objects and a predictable count. Flagged to reviewer. |
 | D2 | Scope of counters | per request / per process | **per partner, process-wide, for the lifetime of the process** | Wording "time elapsed since the first traced BidRequest for that partner" implies cross-request state. |
-| D3 | When is `Duration` evaluated and what happens to in-flight traces? | on every hook / at trigger time | **at trigger time only**; in-flight auctions complete and are printed | Simple, deterministic, no torn packets. Boundary: stop when `elapsed > Duration` (strictly "exceeds"). |
+| D3 | When is `Duration` evaluated and what happens to in-flight traces? | on every hook / at trigger time | **at trigger time only**, against a window that opens at the **entrypoint timestamp** of the first traced request; in-flight auctions complete and are printed | The assessment says "since the first traced BidRequest", and the incoming request's own timestamp is what the trace reports. Boundary: stop when `elapsed > Duration` (strictly "exceeds"). |
 | D4 | Re-arming after stop | never / after Duration | **never** | Rules are hardcoded; the task defines stop conditions only. |
 | D5 | Where to decide the trigger | `entrypoint` (parse account from body) / `processed_auction_request` | **`processed_auction_request`**, using `miCtx.AccountID` | Reuses PBS's own account resolution (parentAccount, stored requests, defaults). Avoids duplicating logic. |
 | D6 | Source of item 1 | raw bytes at `entrypoint` / processed request | **raw entrypoint body + entrypoint timestamp**, attached retroactively when the trace starts; fallback to the processed request if the entrypoint capture is missing | The raw body is what the client sent; the fallback covers plans without `entrypoint`. |
 | D7 | Source of item 4 | `auction_response` / `exitpoint` | capture at `auction_response`; **replace with the `exitpoint` payload when it is an `*openrtb2.BidResponse`**; print at `exitpoint` | `exitpoint` is literally what is sent, including debug ext. Both stages always run together. |
 | D8 | Output format | pretty JSON / NDJSON | **one JSON object per line (NDJSON)**, UTF-8, `\n`-terminated | Machine-readable, safe under concurrency, no interleaving. |
+| D14 | Output path | write in the hook / bounded queue + writer goroutine / unbounded queue | **bounded queue (64) drained by one goroutine; drop, count and log on overflow; drain on `Shutdown`** | `exitpoint` runs before the response is encoded, so a blocking write delays the client (§3.3). Unbounded queues turn a dead stdout into unbounded memory. Loss on overflow is the price of the other two; the rules bound how many packets exist. |
+| D15 | Items 2 and 3 | hook payloads / HTTP bodies | **hook payloads**: the per-bidder request before `MakeRequests`, the adapter result after `MakeBids` | `exchange/bidder.go` runs the hooks around the adapter, and the HTTP bodies never reach a hook. Capturing them is a PBS-core change, not a module. Documented in spec FR-05, FR-06 and §6. |
 | D9 | Timestamps | unix ms / RFC 3339 | **RFC 3339 with nanoseconds, UTC** | Human- and machine-readable; unambiguous. |
 | D10 | Bidder response representation | marshal `adapters.BidderResponse` | **explicit snake_case DTO** | `adapters.BidderResponse` / `TypedBid` have no JSON tags. |
 | D11 | Amount limit under concurrent requests | count on completion / reserve on start | **reserve the slot at trigger time** | Guarantees the count never exceeds `TracePacketsAmount` even with parallel requests. |

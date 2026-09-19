@@ -57,7 +57,7 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 **M-10 Item 2 is a snapshot per bidder at hook time** — FR-05 AC1
 - Given a traced auction with bidders A and B
 - When the request objects are modified after their `bidder_request` hooks
-- Then the packet holds one entry per bidder with the bidder's name, the request as it was at hook time, and the hook time
+- Then the packet holds one entry per bidder with the bidder's name, the per-bidder request as the hook exposed it, and the hook time
 
 **M-11 Item 2 keeps invocation order** — FR-05 AC2
 - Given bidder hooks invoked in order A, B, C
@@ -89,6 +89,12 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 - Then exactly one line is written in a single write: a JSON object with the contract's keys, embedded requests and responses as
   JSON values, bidder arrays `[]` when empty
 
+**M-35 Output is asynchronous, bounded and drained on shutdown** — FR-08 AC1a, AC1b
+- Given the production output path with a queue of N packets and a stdout that does not drain
+- When more than N packets are emitted
+- Then every emit returns at once; the packets beyond the queue are dropped and counted; once stdout drains again the queued
+  packets are written in order; shutdown waits for the queue to empty and later emits are refused
+
 **M-17 A packet is written once** — FR-08 AC3
 - Given a traced auction whose packet was written
 - When `exitpoint` runs again for it
@@ -104,9 +110,10 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 
 ## Stop conditions
 
-**M-20 Time limit, boundary included** — FR-09 AC1, AC2
-- Given a rule with duration D and a first traced auction at T
-- Then an auction starting at T + D is traced, one at T + D + 1 ns is not, and the partner is stopped for duration
+**M-20 Time limit, boundary included, window from the incoming timestamp** — FR-09 AC1, AC2
+- Given a rule with duration D and a first traced auction whose incoming request arrived at T and was triggered later
+- Then the window opens at T, not at the trigger time; an auction triggered at T + D is traced, one at T + D + 1 ns is not, and
+  the partner is stopped for duration
 
 **M-21 Amount limit** — FR-10 AC1, AC3
 - Given a rule with amount 2
@@ -151,6 +158,18 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 **M-29 Missing or unexpected inputs are safe** — FR-15 AC3
 - Given a missing module context, missing payload fields, or payload types other than expected
 - Then no hook panics and no hook fails
+
+## Memory on untraced traffic
+
+**M-33 The entrypoint copy of an untraced request is released at the trigger decision** — NFR-02
+- Given a request whose account has no rule, or whose partner is stopped
+- When `processed_auction_request` runs
+- Then the copy taken at `entrypoint` is no longer held by the request's module context
+
+**M-34 No body is copied once every partner is stopped** — NFR-01
+- Given every partner stopped by amount or duration, or an empty rule set
+- When `entrypoint` runs for any request
+- Then no context is created and the body is not copied
 
 ## Concurrency
 
