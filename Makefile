@@ -1,51 +1,51 @@
 IMAGE   ?= pbs-tracer:local
 PBS_DIR ?= $(HOME)/Dev/prebid-server
+PBS_URL ?= http://localhost:8080
+MODULE  := ./modules/test_provider/test_tracer
 
-.PHONY: help build test bench cover lint fmt vet tidy docker-build docker-run docker-e2e e2e perf profile install-module clean
+.PHONY: help test bench cover lint fmt vet tidy install-module docker-build docker-run e2e load perf profile clean
 
 help:                    ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
-build:                   ## build the CLIs (tracecheck, loadgen) into bin/
-	go build -o bin/tracecheck ./cmd/tracecheck && go build -o bin/loadgen ./cmd/loadgen
-
-test:                    ## unit + integration tests of this repository (PBS is a pinned dependency)
+test:                    ## module unit, race and in-process integration tests; unit tests of the e2e and load helpers
 	go test ./... -race -count=1
 
-bench:                   ## module hook benchmarks (ns/op, allocs per traced and untraced auction)
-	go test ./internal/testtracer -run '^$$' -bench . -benchmem -count=1
+bench:                   ## module overhead per traced and untraced auction (ns/op, allocs)
+	go test $(MODULE) -run '^$$' -bench . -benchmem -count=1
 
-cover:                   ## coverage report for the module package
-	mkdir -p bin && go test ./internal/testtracer -count=1 -coverprofile=bin/cover.out && go tool cover -func=bin/cover.out | tail -1
+cover:                   ## statement coverage of the module
+	mkdir -p bin && go test $(MODULE) -count=1 -coverprofile=bin/cover.out && go tool cover -func=bin/cover.out | tail -1
 
-lint:                    ## golangci-lint (config: .golangci.yml)
+lint:                    ## golangci-lint, including the e2e and load build tags
 	golangci-lint run ./...
 
-fmt:                     ## gofumpt + golines via golangci-lint
+fmt:                     ## gofumpt + golines
 	golangci-lint fmt ./...
 
 vet:
-	go vet ./...
+	go vet -tags e2e,load ./...
 
 tidy:
 	go mod tidy
 
-install-module: ## copy the module into $(PBS_DIR)/modules/test_provider/test_tracer and regenerate builder.go
+install-module:          ## copy the module into $(PBS_DIR) and regenerate modules/builder.go
 	PBS_DIR=$(PBS_DIR) scripts/install-module.sh
 
-docker-build:            ## build PBS @ pinned commit + module image (module tests run inside the build)
+docker-build:            ## PBS @ pinned commit with the module compiled in (module tests run in the build)
 	docker build -t $(IMAGE) .
 
-docker-run: docker-build ## run PBS on :8080; trace packets on stdout, PBS logs on stderr
+docker-run: docker-build ## PBS on :8080; trace packets on stdout, PBS log on stderr
 	docker run --rm -p 8080:8080 -p 127.0.0.1:6060:6060 $(IMAGE)
 
-docker-e2e:              ## build image, run container, fire 02-send-bid-request.sh, verify the trace
-	IMAGE=$(IMAGE) scripts/e2e-docker.sh
+e2e:                     ## end-to-end against pbs-tracer:local and live bidders (builds the image first)
+	docker build -t pbs-tracer:local .
+	go test -tags e2e -count=1 -v ./test/e2e
 
-e2e:                     ## live e2e against a local PBS checkout in $(PBS_DIR)
-	PBS_DIR=$(PBS_DIR) scripts/e2e-live.sh
+load:                    ## load test against a running PBS at $(PBS_URL)
+	go test -tags load -count=1 -v -timeout 0 ./test/load -args -pbs-url $(PBS_URL)
 
-perf:                    ## perf profile (tuned config + DNS sidecar): load run, pprof, metrics deltas → perf-report.md
+perf:                    ## load test on the perf profile (tuned config, DNS cache) with CPU profile and metrics
 	scripts/perf-docker.sh
 
 profile:                 ## 30 s CPU profile from a running PBS admin port (:6060)

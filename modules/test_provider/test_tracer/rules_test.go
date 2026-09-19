@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// FR-02
+// M-02, M-03. FR-02
 func TestValidateRules(t *testing.T) {
 	valid := Rule{PartnerID: "p1", Duration: time.Minute, TracePacketsAmount: 3}
 
@@ -41,13 +41,13 @@ func TestValidateRules(t *testing.T) {
 	}
 }
 
-// FR-02: the shipped rule set must pass its own validation.
+// M-04. FR-02: the shipped rule set must pass its own validation.
 func TestDefaultRulesAreValid(t *testing.T) {
 	assert.NotEmpty(t, defaultRules)
 	assert.NoError(t, validateRules(defaultRules))
 }
 
-// FR-02 / FR-03: the assessment's sample request must trigger tracing with the shipped rules.
+// M-04. FR-02 / FR-03: the assessment's sample request must trigger tracing with the shipped rules.
 func TestDefaultRulesCoverSampleRequestAccount(t *testing.T) {
 	for _, r := range defaultRules {
 		if r.PartnerID == sampleRequestAccountID {

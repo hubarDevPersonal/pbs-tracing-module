@@ -1,9 +1,11 @@
+# The build context needs only the module and pbs.yaml.
 .git
 .github
 docs
 scripts
-cmd
-internal/tracecheck
+test
+testdata
+deploy
 *.md
 *.log
 trace.ndjson

@@ -16,11 +16,11 @@ import (
 	"github.com/prebid/prebid-server/v4/openrtb_ext"
 )
 
-// Benchmarks quantify the module's per-request overhead (docs/06-performance.md):
+// L-01. Benchmarks quantify the module's per-request overhead:
 // a traced auction pays for one body copy plus (2 + 2×bidders) JSON marshals and one stdout write;
 // an untraced auction pays a map lookup and a few context reads.
 
-func benchModule(b *testing.B, rules []Rule) *Module {
+func benchModule(b testing.TB, rules []Rule) *Module {
 	b.Helper()
 	m, err := newModule(rules, newJSONEmitter(io.Discard), time.Now)
 	if err != nil {
@@ -39,7 +39,7 @@ type benchFixture struct {
 	rec     *httptest.ResponseRecorder
 }
 
-func newBenchFixture(b *testing.B) benchFixture {
+func newBenchFixture(b testing.TB) benchFixture {
 	b.Helper()
 	body, err := os.ReadFile(filepath.Join("testdata", "bid_request.json"))
 	if err != nil {

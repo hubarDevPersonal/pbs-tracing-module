@@ -87,7 +87,7 @@ func assertOutcomesClean(t *testing.T, ex hookexecution.HookStageExecutor, wantS
 	}
 }
 
-// FR-01, FR-03..FR-08, FR-15 (through the real executor)
+// M-32. FR-01, FR-03..FR-08, FR-15 (through the real executor)
 func TestIntegration_SampleRequestIsTracedEndToEnd(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, out := newTestModule(t, testRules(), clock)
@@ -113,7 +113,7 @@ func TestIntegration_SampleRequestIsTracedEndToEnd(t *testing.T) {
 	assert.Contains(t, string(p.FinalResponse.Body), `"seat":"appnexus"`)
 }
 
-// FR-10 / FR-13
+// M-25. FR-10 / FR-13
 func TestIntegration_SecondAuctionBeyondLimitProducesNoOutput(t *testing.T) {
 	m, out := newTestModule(t, []Rule{{PartnerID: sampleRequestAccountID, Duration: time.Hour, TracePacketsAmount: 1}}, newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -126,7 +126,7 @@ func TestIntegration_SecondAuctionBeyondLimitProducesNoOutput(t *testing.T) {
 	assert.Len(t, out.Lines(), 1)
 }
 
-// FR-12: a trace that started inside the window is completed even if the partner is stopped meanwhile.
+// M-24. FR-12: a trace that started inside the window is completed even if the partner is stopped meanwhile.
 func TestIntegration_InFlightTraceCompletesAfterPartnerStopped(t *testing.T) {
 	clock := newFakeClock(testStart)
 	m, out := newTestModule(t, []Rule{{PartnerID: sampleRequestAccountID, Duration: time.Second, TracePacketsAmount: 10}}, clock)
@@ -155,7 +155,7 @@ func TestIntegration_InFlightTraceCompletesAfterPartnerStopped(t *testing.T) {
 	assert.NotNil(t, packets[0].FinalResponse)
 }
 
-// FR-15 AC2: hook outcomes never carry errors, even for non-traced requests.
+// M-27, M-28. FR-15 AC2: hook outcomes never carry errors, even for non-traced requests.
 func TestIntegration_OutcomesHaveNoErrors(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	ex := newExecutor(t, m)

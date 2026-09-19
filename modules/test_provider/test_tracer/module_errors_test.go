@@ -17,6 +17,7 @@ import (
 // marshaling can error with real PBS types. FR-15 AC2: such failures are logged, never returned.
 var brokenExt = json.RawMessage(`{"not":"closed"`)
 
+// M-28. FR-15 AC2: a marshal failure inside a hook is logged, the hook still succeeds.
 func TestHooks_MarshalFailuresAreLoggedNotReturned(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	body := loadSampleRequest(t)
@@ -46,7 +47,7 @@ func TestHooks_MarshalFailuresAreLoggedNotReturned(t *testing.T) {
 	assert.Nil(t, packets[0].FinalResponse)
 }
 
-// FR-04 AC3 error branch: the processed-request fallback cannot marshal → no incoming_request, trace still starts.
+// M-09, M-28. FR-04 AC3 error branch: the processed-request fallback cannot marshal → no incoming_request, trace still starts.
 func TestProcessedAuction_FallbackMarshalFailureIsLogged(t *testing.T) {
 	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
 	broken := &openrtb_ext.RequestWrapper{BidRequest: &openrtb2.BidRequest{ID: "broken", Ext: brokenExt}}
@@ -63,7 +64,8 @@ func TestProcessedAuction_FallbackMarshalFailureIsLogged(t *testing.T) {
 	require.Len(t, out.Packets(t), 1)
 }
 
-// AuctionTrace-level: the same failures surface as errors to callers.
+// M-28. AuctionTrace-level: the same failures surface as errors to callers.
+// FR-15 AC2: the trace reports marshal failures to the hook, which decides to log them.
 func TestAuctionTrace_MarshalErrorsAreReturned(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
 	trace, ok := tr.Begin(sampleRequestAccountID, "a")

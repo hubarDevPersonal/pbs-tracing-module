@@ -96,7 +96,7 @@ issued by them.
 Practical notes for anyone repeating this: Proton VPN's resolver returns NXDOMAIN for ad-tech domains even with NetShield on
 "Don't block" — resolve via `8.8.8.8` (`docker run --dns 8.8.8.8` for PBS, `--resolve`/Host header for direct calls).
 
-Consequences for verification (`scripts/e2e-*.sh`, assertions via `cmd/tracecheck`):
+Consequences for verification (the end-to-end suite in `test/e2e`):
 
 - phase A runs the assessment request **verbatim**: items 1, 2 and 4 asserted strictly; item 3 on shape only (`STRICT_BIDS=1` to enforce);
 - phase B runs [testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json) — the same request plus the onetag test
@@ -117,14 +117,28 @@ PBS logs through glog to stderr. Nothing else writes to stdout, so newline-delim
 
 ## 3. Facts from the PBS source that constrain the design
 
-### 3.1 Module registration
+### 3.1 Module registration and construction
 
-- A module lives at `modules/<vendor>/<module>/module.go` and exports `Builder(cfg json.RawMessage, deps moduledeps.ModuleDeps) (interface{}, error)`.
-- `go generate modules/modules.go` runs `modules/generator/buildergen.go`, which scans that path pattern and regenerates `modules/builder.go`.
-  Directory names `test_provider/test_tracer` map to module id `test_provider.test_tracer` and config key `hooks.modules.test_provider.test_tracer`.
-- `modules.Build` instantiates a module only if `hooks.modules.<vendor>.<module>.enabled == true`; a module that implements no hook interface is a fatal startup error.
-- `hook_impl_code` in the plan is a free label passed to the module as `ModuleInvocationContext.HookImplCode`; it is used in metrics and debug output.
-- Optional `Shutdown() error` (`modules.Shutdowner`) is called on server shutdown.
+- **Where the code lives.** `modules/test_provider/test_tracer/`, package `testtracer`. The path is the same in this repository and in
+  the PBS tree, so the module is dropped into a PBS fork unchanged.
+- **Registration.** `go generate ./modules/...` runs `modules/generator/buildergen.go`, which scans `modules/<vendor>/<module>/module.go`
+  and rewrites `modules/builder.go`: a map `vendor → module → Builder`. The directory names give the module id `test_provider.test_tracer`
+  and the config key `hooks.modules.test_provider.test_tracer`. `builder.go` is never edited by hand.
+- **Construction happens once per process, at startup, never per request.** `modules.Build` calls
+  `Builder(cfg json.RawMessage, deps moduledeps.ModuleDeps) (interface{}, error)` only when `hooks.modules.test_provider.test_tracer.enabled`
+  is `true`. A returned error aborts PBS startup (`failed to init "test_provider.test_tracer" module`).
+- **What this module's `Builder` does.** It ignores `cfg` and `deps`: the rules are hardcoded, and the module makes no outbound calls, so it
+  needs neither the module config nor the shared HTTP client in `deps`. It validates the rules and returns one `*Module` that holds
+  - the rule table, a map from `PartnerID` to rule, immutable after startup;
+  - the per-partner counters behind one mutex, touched only by requests whose account matches a rule;
+  - the emitter over `os.Stdout`, whose mutex serialises trace lines.
+- **Stage dispatch is resolved at startup too.** `hooks.NewHookRepository` type-asserts the returned value once against every stage
+  interface and stores it per stage. On the request path PBS does a map lookup by module code; there is no reflection. A value that
+  implements no stage interface is a startup error.
+- **Shutdown.** `Shutdown() error` (`modules.Shutdowner`) is optional and not implemented: the module holds no connections or buffers to flush.
+
+What a request costs is decided by the hooks, not by construction: §3.3 for what PBS spends per hook invocation, design §3 and §9 for what the
+module does in each hook.
 
 ### 3.2 Stage payloads and what each offers
 
@@ -141,7 +155,17 @@ PBS logs through glog to stderr. Nothing else writes to stdout, so newline-delim
 
 ### 3.3 Execution semantics (`hooks/hookexecution`)
 
-- Every hook of a group runs in its own goroutine with `ctx = context.WithTimeout(context.Background(), groupTimeout)`; a hook that overruns is discarded and recorded as a timeout.
+- **Per-invocation cost paid by PBS.** `executeGroup` starts one goroutine per hook and one more that closes the result channel.
+  Each of those runs `executeHook`, which starts the hook itself in another goroutine and waits on it with `time.After(groupTimeout)`.
+  Every hook invocation therefore costs two goroutines and a timer, plus one goroutine per group, before the module does any work.
+  With the provided plan and the sample's four bidders one auction makes up to 13 invocations: 1 `entrypoint`, 1 `processed_auction_request`,
+  4 `bidder_request`, up to 4 `raw_bidder_response`, 1 `all_processed_bid_responses`, 1 `auction_response`, 1 `exitpoint`.
+- **Timeouts do not stop a hook.** The hook's `ctx` is `context.WithTimeout(context.Background(), groupTimeout)`. It derives from
+  `Background`, so neither a client disconnect nor the auction's `tmax` cancels it. When the timer fires first, PBS records a timeout and
+  moves on, but the hook goroutine keeps running until the hook returns. A hook that blocks keeps its goroutine and everything it references.
+  This module's only blocking call is the stdout write at `exitpoint`, which does not observe `ctx`.
+  Verified against the pinned commit and against upstream master `d1f5e80d` of 2026-09-17: `hooks/hookexecution/execution.go`
+  last changed with the v4 module-path bump (`615e5dfa`, 2026-03-05).
 - `ModuleInvocationContext` is rebuilt for every invocation. `Endpoint` is always set. `AccountID` and `AccountConfig` are set only after `SetAccount` (i.e. from `raw_auction_request` on). `ModuleContext` is the pointer the module returned in a previous stage of the **same request**, or `nil` on first use.
 - After each stage the executor stores `HookResult.ModuleContext` per module (`moduleContexts.put`); the first stored pointer is kept and later values are merged into it with `SetAll`. Storing a pointer to a per-request struct in the context therefore survives all stages, including concurrent per-bidder stages.
 - `hookstage.ModuleContext` is `sync.RWMutex`-guarded; `Get`/`Set` on a nil receiver are safe no-ops.
