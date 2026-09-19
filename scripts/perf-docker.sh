@@ -39,7 +39,7 @@ log "3/6 CPU profile in the background + load test: $RPS rps, $DURATION s per sc
 curl -s -o "$WORK/cpu.pprof" "http://localhost:6060/debug/pprof/profile?seconds=$((2 * DURATION))" &
 PPROF_PID=$!
 LOAD_STATUS=0
-( cd "$ROOT" && go test -tags load -count=1 -v -timeout 0 ./test/load \
+( cd "$ROOT" && go test -tags load -count=1 -v -timeout 0 -run '^TestLoad_' ./test/load \
     -args -pbs-url http://localhost:8080 -rps "$RPS" -duration "${DURATION}s" -concurrency "$CONCURRENCY" ) | tee "$WORK/load.txt" || LOAD_STATUS=$?
 wait "$PPROF_PID" || true
 

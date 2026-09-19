@@ -58,7 +58,8 @@ make fmt         # gofumpt + golines
 make cover       # coverage of the module
 make bench       # module cost per traced and untraced auction (ns/op, allocs)
 make e2e         # build the image and run the end-to-end suite against live bidders
-make load        # load suite against a running PBS (PBS_URL, default http://localhost:8080)
+make load        # load suite against a running PBS (PBS_URL, default http://localhost:8080), live bidders
+make load-bench  # bench matrix against stub bidders: hooks off/on, active tracing, 3 partners, large payload, stalled stdout
 make perf        # load suite on the perf profile (tuned config + DNS cache) with CPU profile and metric deltas
 ```
 

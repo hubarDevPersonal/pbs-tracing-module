@@ -107,6 +107,23 @@ go test -tags load -count=1 -v ./test/load -args -pbs-url http://localhost:8080 
 
 `-concurrency` must stay at or above rate × worst-case latency, otherwise arrivals are dropped and the run fails.
 
+### Bench with stub bidders
+
+`make load-bench` builds `pbs-tracer:loadbench` (the module with the bench rules in
+`modules/test_provider/test_tracer/rules_loadbench.go`, build tag `loadbench`), starts a stub bidder on the host at `:18081`,
+and runs six scenarios against [deploy/pbs.load.yaml](../deploy/pbs.load.yaml), which points the sample's four bidders at the stub:
+hooks off, hooks on with nothing traced, active tracing for one and three partners, a large payload, and a stdout nobody reads
+(scenarios L-05 to L-09 in [test-specs/load.md](test-specs/load.md)). Each scenario gets a fresh container. The comparison table
+is in the test log.
+
+```bash
+make load-bench                                                         # 100 auctions/s, 20 s per scenario
+make load-bench BENCH_ARGS="-args -bench-rps 300 -bench-duration 60s -bench-concurrency 128 -stub-latency 25ms"
+```
+
+Needs Docker and a free port 18081 on the host. The container reaches the stub as `host.docker.internal` (added with
+`--add-host` on Linux). Nothing leaves the machine.
+
 `make perf` runs the same suite against the `perf` profile of `docker-compose.yml`: [deploy/pbs.perf.yaml](../deploy/pbs.perf.yaml)
 (HTTP client pools and dial timeouts, clamped auction timeouts, simulated bidder throttling, Prometheus on `:9100`) and a caching
 CoreDNS sidecar ([deploy/coredns/Corefile](../deploy/coredns/Corefile), metrics on `:9153`). While the load runs it captures a CPU

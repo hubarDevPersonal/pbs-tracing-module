@@ -61,7 +61,7 @@ func TestLoad_Auction(t *testing.T) {
 			defer cancel()
 			report, err := Run(ctx, Config{
 				URL:              *pbsURL + "/openrtb2/auction",
-				Body:             sc.body,
+				Bodies:           [][]byte{sc.body},
 				RPS:              *rps,
 				Duration:         *duration,
 				Concurrency:      *concurrency,

@@ -3,7 +3,7 @@ PBS_DIR ?= $(HOME)/Dev/prebid-server
 PBS_URL ?= http://localhost:8080
 MODULE  := ./modules/test_provider/test_tracer
 
-.PHONY: help test bench cover lint fmt vet tidy install-module docker-build docker-run e2e load perf profile clean
+.PHONY: help test bench cover lint fmt vet tidy install-module docker-build docker-run e2e load load-bench perf profile clean
 
 help:                    ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -24,7 +24,7 @@ fmt:                     ## gofumpt + golines
 	golangci-lint fmt ./...
 
 vet:
-	go vet -tags e2e,load ./...
+	go vet -tags e2e,load ./... && go vet -tags loadbench ./modules/...
 
 tidy:
 	go mod tidy
@@ -42,8 +42,12 @@ e2e:                     ## end-to-end against pbs-tracer:local and live bidders
 	docker build -t pbs-tracer:local .
 	go test -tags e2e -count=1 -v ./test/e2e
 
-load:                    ## load test against a running PBS at $(PBS_URL)
-	go test -tags load -count=1 -v -timeout 0 ./test/load -args -pbs-url $(PBS_URL)
+load:                    ## load test against a running PBS at $(PBS_URL), live bidders
+	go test -tags load -count=1 -v -timeout 0 -run '^TestLoad_' ./test/load -args -pbs-url $(PBS_URL)
+
+load-bench:              ## bench matrix against stub bidders: hooks off/on, active tracing, 3 partners, large payload, stalled stdout
+	docker build --build-arg GO_TAGS=loadbench -t pbs-tracer:loadbench .
+	go test -tags load -count=1 -v -timeout 0 -run '^TestLoadBench$$' ./test/load $(BENCH_ARGS)
 
 perf:                    ## load test on the perf profile (tuned config, DNS cache) with CPU profile and metrics
 	scripts/perf-docker.sh

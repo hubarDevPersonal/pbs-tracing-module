@@ -16,7 +16,7 @@ import (
 func validConfig(url string) Config {
 	return Config{
 		URL:              url,
-		Body:             []byte(`{}`),
+		Bodies:           [][]byte{[]byte(`{}`)},
 		RPS:              50,
 		Duration:         600 * time.Millisecond,
 		Concurrency:      8,
@@ -30,7 +30,7 @@ func TestConfigValidate(t *testing.T) {
 
 	cases := map[string]func(*Config){
 		"empty url":          func(c *Config) { c.URL = "" },
-		"empty body":         func(c *Config) { c.Body = nil },
+		"no bodies":          func(c *Config) { c.Bodies = nil },
 		"zero rps":           func(c *Config) { c.RPS = 0 },
 		"nan rps":            func(c *Config) { c.RPS = math.NaN() },
 		"infinite rps":       func(c *Config) { c.RPS = math.Inf(1) },

@@ -26,7 +26,7 @@ A change of behaviour starts in the specification, then the test specifications,
 | Race | shared state under concurrent hooks and requests | in process, `-race`, repeated runs | [module.md](test-specs/module.md) |
 | Integration | the module driven by PBS's real hook executor and plan builder, with the stage list of the provided `pbs.yaml` | in process, no HTTP server | [module.md](test-specs/module.md) |
 | End to end | PBS built at the pinned commit with the module compiled in, the provided `pbs.yaml` unchanged, **live bidders** | Docker image, started by the test | [e2e.md](test-specs/e2e.md) |
-| Load | the module's steady-state cost and blocking behaviour; PBS with the module under a sustained auction rate | in process (every run) and a running PBS with live bidders (on demand) | [load.md](test-specs/load.md) |
+| Load | the module's steady-state cost and blocking behaviour; PBS with the module under a sustained auction rate; a bench matrix against stub bidders (hooks off/on, active tracing, partners, payload size, stalled stdout) | in process (every run); a running PBS with live bidders and the bench image with stub bidders (on demand) | [load.md](test-specs/load.md) |
 
 No mocks of PBS and no mock bidders: the in-process levels use PBS's own packages, and the end-to-end and load levels use the real
 server against live bidders (decision of the assignment owner).
@@ -41,6 +41,7 @@ server against live bidders (decision of the assignment owner).
 | Benchmarks | `make bench` | on changes to the hook path; compared against the previous run |
 | End to end | `make e2e` (build tag `e2e`) | before merging module changes; needs Docker and outbound internet |
 | Load against PBS | `make load` or `make perf` (build tag `load`) | before merging changes to the hook path or the PBS configuration |
+| Bench matrix | `make load-bench` (build tag `load`, image built with `loadbench`) | before merging changes to the hook path; numbers compared with the previous run |
 
 The `e2e` and `load` suites sit behind build tags because they need Docker, network and minutes of wall time. The helpers they use
 (trace verification, the load driver) have unit tests in the default suite.
@@ -70,4 +71,5 @@ Exit, all required:
 - The sample's four bidders answer 204 from every network tried (analysis §2.3.1), so the assessment request alone never exercises
   bidder responses live. The live-bid request covers it; the in-process levels cover it deterministically.
 - Latency against live bidders is dominated by the bidders and is reported, not asserted. Timing budgets apply only in process.
-- Capacity of PBS itself needs stubbed bidders or stored responses and is out of scope; the load level checks the module, not PBS.
+- The bench compares configurations at one moderate rate against stub bidders; the rate at which PBS saturates depends on the host and
+  is not asserted, as the assessment sets no target.

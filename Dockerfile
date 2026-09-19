@@ -10,6 +10,7 @@
 #   PBS_REPO  upstream repository (default github.com/prebid/prebid-server)
 #   PBS_REF   commit/tag to build against (default: the commit the module was developed and tested on)
 #   RUN_TESTS "true" runs the module's test suite during the build (default true)
+#   GO_TAGS   build tags for the final binary; "loadbench" swaps the hardcoded rules for the bench rules (test/load)
 ARG GO_IMAGE=golang:1.26-bookworm
 ARG BASE_IMAGE=ubuntu:22.04
 
@@ -17,6 +18,7 @@ FROM ${GO_IMAGE} AS build
 ARG PBS_REPO=https://github.com/prebid/prebid-server.git
 ARG PBS_REF=f660bedc03ef1a51f6af8dcd0dd6ab61e1d4c417
 ARG RUN_TESTS=true
+ARG GO_TAGS=
 ENV CGO_ENABLED=1 GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod
 
 WORKDIR /src/prebid-server
@@ -36,7 +38,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
  && gofmt -l ./modules/test_provider | { ! grep . ; } \
  && go vet ./modules/test_provider/... \
  && if [ "${RUN_TESTS}" = "true" ]; then go test -count=1 ./modules/test_provider/...; fi \
- && go build -ldflags "-X github.com/prebid/prebid-server/v4/version.Ver=assessment-${PBS_REF} -X github.com/prebid/prebid-server/v4/version.Rev=${PBS_REF}" -o /out/prebid-server .
+ && go build -tags "${GO_TAGS}" -ldflags "-X github.com/prebid/prebid-server/v4/version.Ver=assessment-${PBS_REF} -X github.com/prebid/prebid-server/v4/version.Rev=${PBS_REF}" -o /out/prebid-server .
 
 FROM ${BASE_IMAGE} AS release
 LABEL org.opencontainers.image.title="prebid-server + test_provider.test_tracer"
