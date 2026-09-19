@@ -249,3 +249,20 @@ func runFullAuction(t *testing.T, m *Module, accountID string, body []byte, bidd
 	require.Empty(t, errs)
 	return mc
 }
+
+func samplePacket(idx int) TracePacket {
+	ts := testStart.Add(time.Duration(idx) * time.Second)
+	return TracePacket{
+		Module:          ModuleCode,
+		PartnerID:       sampleRequestAccountID,
+		Rule:            RuleView{PartnerID: sampleRequestAccountID, Duration: "10m0s", TracePacketsAmount: 3},
+		PacketIndex:     idx,
+		AuctionID:       "auction",
+		StartedAt:       ts,
+		CompletedAt:     ts.Add(300 * time.Millisecond),
+		IncomingRequest: &RequestPacket{Timestamp: ts, Body: json.RawMessage(`{"id":"auction"}`)},
+		BidderRequests:  []BidderRequestPacket{{Timestamp: ts, Bidder: "appnexus", Request: json.RawMessage(`{"id":"auction"}`)}},
+		BidderResponses: []BidderResponsePacket{{Timestamp: ts, Bidder: "appnexus", Response: BidderResponseView{Currency: "USD", Bids: []TypedBidView{}}}},
+		FinalResponse:   &ResponsePacket{Timestamp: ts, Body: json.RawMessage(`{"id":"auction","seatbid":[]}`)},
+	}
+}

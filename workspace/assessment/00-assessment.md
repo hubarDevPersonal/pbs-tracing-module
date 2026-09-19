@@ -4,8 +4,8 @@
 Your task is to implement a custom Prebid Server module (in Go) that traces and collects specific auction data throughout the request lifecycle. 
 
 ## Provided Files
-* `01-bid-request-example.json`: An example of the BidRequest payload that will be sent to the Prebid Server.
-* `02-send-bid-request.sh`: A shell script containing the `curl` command to send the sample BidRequest.
+* `assessment/01-bid-request-example.json`: An example of the BidRequest payload that will be sent to the Prebid Server.
+* `assessment/02-send-bid-request.sh`: A shell script containing the `curl` command to send the sample BidRequest.
 * `pbs.yaml`: A ready-to-run Prebid Server configuration file.
 
 ## Task Description
@@ -27,7 +27,7 @@ Create a Prebid Server module that traces (collects) the following auction data:
   * **Time Limit:** The time elapsed since the *first* traced BidRequest for that partner exceeds the `Duration`.
   * **Amount Limit:** The total number of collected traces for the partner reaches `TracePacketsAmount`.
 * **Account ID Mapping:** The `Account.ID` provided by the Prebid server maps directly to the `PartnerID` used in your tracing conditions.
-* **Test Flag:** The provided `01-bid-request-example.json` includes the field `"test": 1`. This safely forces the Prebid Server to always return at least one valid BidResponse from the `appnexus` bidder, which is highly useful for validating your tracing logic.
+* **Test Flag:** The provided `assessment/01-bid-request-example.json` includes the field `"test": 1`. This safely forces the Prebid Server to always return at least one valid BidResponse from the `appnexus` bidder, which is highly useful for validating your tracing logic.
 * **Endpoint Scope:** The module should strictly affect the `/openrtb2/auction` endpoint. Any other endpoint is out of scope of the assessment.
 
 ## Reference Materials

@@ -24,7 +24,7 @@ The module is registered as vendor `test_provider`, module `test_tracer`, and is
 - AC3: `Builder` ignores its configuration payload except for the `enabled` flag handled by PBS itself; no module-level config is required.
 
 ### FR-02 Hardcoded rules
-Rules are declared in source (`rules.go`) as a slice of rule objects. At least one rule has `PartnerID == "664-025-677-881"` so the provided sample request triggers tracing.
+Rules are declared in source (`rules_default.go`) as a slice of rule objects. At least one rule has `PartnerID == "664-025-677-881"` so the provided sample request triggers tracing.
 - AC1: `Builder` fails (returns error → PBS refuses to start) if any rule has empty `PartnerID`, `Duration <= 0`, `TracePacketsAmount <= 0`, or a `PartnerID` that appears in more than one rule.
 - AC2: An empty rule set is valid and makes the module a no-op.
 
@@ -118,7 +118,7 @@ A new trace is refused when the number of traces **started** for the partner equ
 | NFR-01 | Hook latency: O(size of payload) marshalling only; no network or disk I/O; no hook waits for stdout (FR-08 AC1a). Once every partner is stopped, `entrypoint` no longer copies request bodies. |
 | NFR-02 | Memory: module-level state bounded by number of rules plus the output queue (FR-08 AC1a); the entrypoint body copy is released at `processed_auction_request` for requests that are not traced, and the trace at `exitpoint` for those that are. |
 | NFR-03 | Compatibility: builds with the PBS module's Go version (1.25) and the v4 module path; no new third-party dependencies. |
-| NFR-04 | Code quality: `gofmt`, `go vet` clean; unit tests in the same package; concurrency tests named `TestRace*` per PBS `docs/developers/automated-tests.md`. |
+| NFR-04 | Code quality: `gofmt`, `go vet` clean; unit tests in the same package; concurrency tests named `TestRace*` per PBS `workspace/developers/automated-tests.md`. |
 | NFR-05 | Testability: clock (`func() time.Time`) and output writer (`io.Writer`) are injectable; production wiring uses `time.Now` and `os.Stdout`. |
 | NFR-06 | Observability: internal errors are logged via PBS `logger` (glog → stderr) with the module code prefix; no logging on the happy path other than the trace itself. |
 | NFR-07 | Module rules compliance (docs.prebid.org): the module creates no bids, adds nothing to creatives, makes no outbound calls and does not mutate payloads; user data in traces is written only to the local process stdout and is never transmitted. |

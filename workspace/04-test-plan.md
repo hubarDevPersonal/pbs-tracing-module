@@ -60,7 +60,7 @@ Exit, all required:
 
 ## 5. Test data
 
-- `modules/test_provider/test_tracer/testdata/bid_request.json` is a verbatim copy of `01-bid-request-example.json`. Its account resolves
+- `modules/test_provider/test_tracer/testdata/bid_request.json` is a verbatim copy of `workspace/assessment/01-bid-request-example.json`. Its account resolves
   to `664-025-677-881`.
 - `testdata/bid-request-live-bid.json` is the sample plus onetag's documented test publisher, with `parentAccount` removed so the account
   resolves to `33415-10498`. onetag returns a real test bid, which exercises bidder responses live.

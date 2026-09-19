@@ -12,11 +12,11 @@ For every traced auction:
 3. every `BidResponse` received from a bidder with timestamp and bidder name;
 4. the final auction response returned to the client with timestamp.
 
-Output is newline-delimited JSON; see `docs/02-specification.md` §5 in the assessment repository for the contract.
+Output is newline-delimited JSON; see `workspace/02-specification.md` §5 in the assessment repository for the contract.
 
 ## Trigger and stop rules
 
-Rules are **hardcoded** in `rules.go`:
+Rules are **hardcoded** in `rules_default.go`:
 
 ```go
 {PartnerID: "664-025-677-881", Duration: 10 * time.Minute, TracePacketsAmount: 3}
@@ -79,6 +79,21 @@ the packet is dropped and a warning with the drop count goes to stderr. `Shutdow
 
 `rules_default.go` holds the production rule set. `rules_loadbench.go` (build tag `loadbench`) replaces it with three partners
 whose limits outlast a load run; only `make load-bench` builds with that tag.
+
+## Layout
+
+| File | Holds |
+|------|-------|
+| `module.go` | `Builder`, `Module`, `Shutdown`, module-context keys |
+| `hooks.go` | the seven hook handlers, one per stage |
+| `rules.go`, `rules_default.go`, `rules_loadbench.go` | `Rule`, validation, the production rule set, the bench rule set (tag `loadbench`) |
+| `tracer.go` | `Tracer`: per-partner state, trigger and stop conditions |
+| `trace.go` | `AuctionTrace`: per-request collector and snapshots |
+| `packet.go` | `TracePacket` and the DTOs of the JSON contract |
+| `emitter.go` | NDJSON writer and the bounded asynchronous queue in front of stdout |
+| `<file>_test.go` | unit tests next to the file they cover; plus `integration_test.go`, `race_test.go`, `bench_test.go`, `helpers_test.go` |
+
+Tests live in the same package and directory: PBS's coverage check and the module guide expect them there.
 
 ## Building
 

@@ -9,13 +9,22 @@ PBS tree. It imports only PBS and the standard library, so the Dockerfile and `s
 
 ```text
 modules/test_provider/test_tracer/
-├── module.go            # Builder, Module, the seven hook handlers, module-context keys
-├── rules.go             # Rule type, hardcoded defaultRules, validateRules
-├── tracer.go            # Tracer (per-partner state, stop conditions), AuctionTrace (per-request collector)
-├── output.go            # TracePacket DTOs, Emitter interface, jsonEmitter (NDJSON to io.Writer)
-├── README.md            # PBS-style module documentation
+├── module.go              # Builder, Module, Shutdown; module-context keys; small helpers
+├── hooks.go               # the seven hook handlers, one per stage of the plan
+├── rules.go               # Rule type and validateRules
+├── rules_default.go       # the hardcoded production rule set
+├── rules_loadbench.go     # rule set for the load bench (build tag loadbench)
+├── tracer.go              # Tracer: per-partner state, trigger and stop conditions
+├── trace.go               # AuctionTrace: per-request collector, snapshots
+├── packet.go              # TracePacket and the DTOs of the JSON contract
+├── emitter.go             # Emitter: jsonEmitter (NDJSON, one Write per packet), asyncEmitter (bounded queue)
+├── README.md              # PBS-style module documentation
 ├── testdata/bid_request.json
-├── *_test.go            # unit, integration, race and overhead tests (same package)
+├── <file>_test.go         # unit tests next to the file they cover (module, hooks, rules, tracer, trace, emitter)
+├── integration_test.go    # the module driven by PBS's real hook executor
+├── race_test.go           # TestRace* (PBS convention)
+├── bench_test.go          # benchmarks and in-process load criteria
+└── helpers_test.go        # fake clock, buffers, fixtures shared by the tests
 ```
 
 Package name `testtracer` (Go style: no underscores). Directory names are dictated by PBS's generator regex `^([^/]+)/([^/]+)/module.go$`.
@@ -207,7 +216,7 @@ No account-level configuration is read (`miCtx.AccountConfig` ignored).
 - Per untraced request: the `entrypoint` body copy, because the account is unknown until `processed_auction_request`; one map lookup
   there; one module-context `Get` per later hook. No lock is taken: `Tracer.mu` is reached only when the account matches a rule.
 - Rules cap the number of traced auctions per process, so the steady-state cost of the module is the untraced path. Its allocation
-  budget is asserted in the default test suite; timing is measured by the benchmarks (`docs/test-specs/load.md`).
+  budget is asserted in the default test suite; timing is measured by the benchmarks (`workspace/test-specs/load.md`).
 - Trace memory is released at `exitpoint` by clearing the context key; the `ModuleContext` itself is owned by the executor and dies with the request.
 
 ## 10. Packaging (Docker)

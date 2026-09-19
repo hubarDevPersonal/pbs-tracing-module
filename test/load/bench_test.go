@@ -65,7 +65,7 @@ type benchResult struct {
 	dropped    int
 }
 
-// L-05 … L-09 (docs/test-specs/load.md). TestLoadBench measures Prebid Server with the module against
+// L-05 … L-09 (workspace/test-specs/load.md). TestLoadBench measures Prebid Server with the module against
 // stub bidders on the host, one fresh container per scenario, and compares hooks off, hooks on with
 // nothing traced, active tracing for one and for three partners, a large payload, and a stdout that
 // nobody reads. It fails on any auction error, on a trace count that does not match the scenario, and
@@ -73,7 +73,7 @@ type benchResult struct {
 //
 //	make load-bench    # builds pbs-tracer:loadbench, then: go test -tags load -run TestLoadBench ./test/load
 func TestLoadBench(t *testing.T) {
-	sample, err := os.ReadFile("../../01-bid-request-example.json")
+	sample, err := os.ReadFile("../../workspace/assessment/01-bid-request-example.json")
 	require.NoError(t, err)
 	startStubBidder(t, *stubAddr, *stubLatency)
 
