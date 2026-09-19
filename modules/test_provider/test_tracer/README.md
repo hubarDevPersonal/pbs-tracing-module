@@ -59,13 +59,21 @@ The module reads no module-level or account-level configuration.
 |-------|------|
 | `entrypoint` | capture raw body + timestamp (account unknown yet) |
 | `processed_auction_request` | trigger decision on `AccountID`; start trace |
-| `bidder_request` | record outgoing request per bidder |
-| `raw_bidder_response` | record bidder response (not invoked by PBS for HTTP 204 / adapter errors) |
+| `bidder_request` | record the per-bidder OpenRTB request PBS hands to the adapter (before the adapter builds its HTTP calls) |
+| `raw_bidder_response` | record the adapter's parsed result (after it read the HTTP response; not invoked by PBS for HTTP 204 / adapter errors) |
 | `all_processed_bid_responses` | pass-through |
 | `auction_response` | record final response |
 | `exitpoint` | refine final response with the object being sent; print the packet |
 
 The module never rejects requests and never mutates payloads.
+
+What the hooks expose is what the trace holds: items 2 and 3 are the objects at the module stages, not the HTTP bodies exchanged
+with bidders, which no PBS hook can see. Their timestamps are hook times.
+
+## Output
+
+Packets go to stdout through a bounded queue (64) drained by one goroutine, so no hook ever waits for stdout. If the queue is full
+the packet is dropped and a warning with the drop count goes to stderr. `Shutdown` (called by PBS on graceful stop) drains the queue.
 
 ## Building
 

@@ -2,7 +2,6 @@ package testtracer
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -27,59 +26,39 @@ func TestOverhead_UntracedAuctionAllocationBudget(t *testing.T) {
 	assert.LessOrEqual(t, allocs, float64(untracedAllocBudget), "allocations per untraced auction")
 }
 
-// blockingWriter blocks every Write until release is closed, like a stdout pipe nobody reads.
-type blockingWriter struct {
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
-
-func (w *blockingWriter) Write(p []byte) (int, error) {
-	w.once.Do(func() { close(w.entered) })
-	<-w.release
-	return len(p), nil
-}
-
-// L-03. NFR-01: the stdout write at exitpoint is the module's only blocking call. A stalled stdout may
-// hold the traced auction that writes, but auctions that are not traced never touch the emitter and
-// must complete regardless.
-func TestOverhead_BlockedStdoutStallsOnlyTracedAuctions(t *testing.T) {
+// L-03. NFR-01 / FR-08 AC1a: a stdout that does not drain delays no auction. Traced auctions enqueue and
+// return; beyond the queue their packets are dropped and counted; untraced auctions never touch the output.
+func TestOverhead_BlockedStdoutStallsNoAuction(t *testing.T) {
 	w := &blockingWriter{entered: make(chan struct{}), release: make(chan struct{})}
-	m, err := newModule(testRules(), newJSONEmitter(w), time.Now)
+	const queue = 4
+	em := newAsyncEmitter(newJSONEmitter(w), queue)
+	rules := []Rule{{PartnerID: sampleRequestAccountID, Duration: time.Hour, TracePacketsAmount: 1 << 20}}
+	m, err := newModule(rules, em, time.Now)
 	require.NoError(t, err)
 	f := newBenchFixture(t)
 
-	traced := make(chan struct{})
+	const traced = queue + 10
+	done := make(chan struct{})
 	go func() {
-		defer close(traced)
-		runAuctionForBench(m, sampleRequestAccountID, f)
-	}()
-	select {
-	case <-w.entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the traced auction never reached the stdout write")
-	}
-
-	untraced := make(chan struct{})
-	go func() {
-		defer close(untraced)
+		defer close(done)
+		for range traced {
+			runAuctionForBench(m, sampleRequestAccountID, f)
+		}
 		for range 100 {
 			runAuctionForBench(m, "not-a-partner", f)
 		}
 	}()
 	select {
-	case <-untraced:
+	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("untraced auctions were blocked by the stalled stdout of a traced auction")
+		t.Fatal("auctions were held by the stalled stdout")
 	}
+	<-w.entered
+	assert.EqualValues(t, traced-queue-1, em.Dropped(), "one packet is in the blocked write, queue holds the next ones, the rest are dropped")
 
-	select {
-	case <-traced:
-		t.Fatal("the traced auction finished although its write is still blocked")
-	default:
-	}
 	close(w.release)
-	<-traced
+	require.NoError(t, m.Shutdown())
+	assert.EqualValues(t, queue+1, w.writes.Load(), "the blocked packet and the queued ones are written after stdout resumes")
 
 	// the module stays usable: a later hook invocation is a plain no-op
 	res, err := m.HandleBidderRequestHook(context.Background(), auctionCtx("not-a-partner", hookstage.NewModuleContext()), hookstage.BidderRequestPayload{})

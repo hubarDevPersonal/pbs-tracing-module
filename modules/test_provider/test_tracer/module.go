@@ -59,9 +59,21 @@ type Module struct {
 }
 
 // Builder is the PBS entry point (see modules/builder.go). Module-level configuration is not used;
-// rules are hardcoded in rules.go by assessment requirement.
+// rules are hardcoded in rules.go by assessment requirement. Output goes to stdout through a bounded
+// queue and one writer goroutine, so the hooks never wait for stdout (design §5).
 func Builder(_ json.RawMessage, _ moduledeps.ModuleDeps) (interface{}, error) {
-	return newModule(defaultRules, newJSONEmitter(os.Stdout), time.Now)
+	return newModule(defaultRules, newAsyncEmitter(newJSONEmitter(os.Stdout), defaultQueueSize), time.Now)
+}
+
+// Shutdown implements modules.Shutdowner (called by PBS on graceful shutdown): it drains the output
+// queue so packets of auctions completed just before the stop are not lost. The interface is not
+// asserted at compile time because importing package modules from a module is an import cycle in the
+// PBS tree.
+func (m *Module) Shutdown() error {
+	if c, ok := m.emitter.(interface{ Close() error }); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 // newModule wires the module with injectable rules, output and clock (NFR-05).
@@ -112,6 +124,10 @@ func (m *Module) HandleEntrypointHook(
 		return result, nil
 	}
 	// The account is unknown at this stage (design §3); stash the raw body and decide later.
+	// Once every partner is stopped no request can be traced, so the copy is skipped (NFR-01).
+	if m.tracer.Exhausted() {
+		return result, nil
+	}
 	mc := miCtx.ModuleContext
 	if mc == nil {
 		mc = hookstage.NewModuleContext()
@@ -132,20 +148,20 @@ func (m *Module) HandleProcessedAuctionHook(
 		return result, nil
 	}
 
-	trace, ok := m.tracer.Begin(miCtx.AccountID, payload.Request.ID)
-	if !ok {
-		return result, nil
-	}
-
 	mc := miCtx.ModuleContext
 	if mc == nil { // plan without an entrypoint stage
 		mc = hookstage.NewModuleContext()
 	}
-	if v, found := mc.Get(ctxKeyEntrypoint); found {
-		if capture, ok := v.(entrypointCapture); ok && capture.body != nil {
-			trace.SetIncomingRequest(capture.at, capture.body) // FR-04 AC1
-		}
-		mc.Set(ctxKeyEntrypoint, nil)
+	capture, _ := mc.Get(ctxKeyEntrypoint)
+	mc.Set(ctxKeyEntrypoint, nil) // the copy is not needed past this point, traced or not (NFR-02)
+	incoming, _ := capture.(entrypointCapture)
+
+	trace, ok := m.tracer.Begin(miCtx.AccountID, payload.Request.ID, incoming.at)
+	if !ok {
+		return result, nil
+	}
+	if incoming.body != nil {
+		trace.SetIncomingRequest(incoming.at, incoming.body) // FR-04 AC1
 	}
 	if !trace.hasIncomingRequest() { // FR-04 AC3: the processed request stands in, stamped with the trace start
 		if body, err := json.Marshal(payload.Request.BidRequest); err != nil {

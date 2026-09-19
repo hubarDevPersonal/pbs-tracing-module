@@ -87,7 +87,7 @@ func TestExitpoint_EmitFailureDoesNotFailTheHook(t *testing.T) {
 // M-13. FR-06 / D10: optional TypedBid parts and FLEDGE configs are carried into the DTO.
 func TestAuctionTrace_BidderResponseSnapshotCoversOptionalFields(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
-	trace, ok := tr.Begin(sampleRequestAccountID, "a")
+	trace, ok := tr.Begin(sampleRequestAccountID, "a", time.Time{})
 	require.True(t, ok)
 
 	resp := &adapters.BidderResponse{
@@ -124,7 +124,7 @@ func TestAuctionTrace_BidderResponseSnapshotCoversOptionalFields(t *testing.T) {
 // M-09. FR-04: a non-JSON entrypoint body must not break the packet.
 func TestAuctionTrace_NonJSONIncomingBodyIsWrappedAsString(t *testing.T) {
 	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
-	trace, ok := tr.Begin(sampleRequestAccountID, "a")
+	trace, ok := tr.Begin(sampleRequestAccountID, "a", time.Time{})
 	require.True(t, ok)
 
 	trace.SetIncomingRequest(testStart, []byte("this is not json"))

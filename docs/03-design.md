@@ -105,8 +105,8 @@ All handlers return `Reject=false`, no mutations, `nil` error (FR-15). Internal 
 
 | Stage | Behaviour |
 |-------|-----------|
-| `entrypoint` | `mc := miCtx.ModuleContext; if mc == nil { mc = hookstage.NewModuleContext() }`; `mc.Set(ctxKeyEntrypoint, entrypointCapture{at: now(), body: bytes.Clone(payload.Body)})`; return `ModuleContext: mc`. Account is unknown here by design (§3.3 of analysis), so no rule evaluation. |
-| `processed_auction_request` | `trace, ok := tracer.Begin(miCtx.AccountID, payload.Request.ID)`; if `!ok` return. Incoming request: use `entrypointCapture` from context if present, else marshal `payload.Request.BidRequest` with `now()`. `mc.Set(ctxKeyTrace, trace)`. If `mc == nil` (plan without entrypoint) create it. |
+| `entrypoint` | If `tracer.Exhausted()` (every partner stopped) return without touching the context. Else `mc := miCtx.ModuleContext; if mc == nil { mc = hookstage.NewModuleContext() }`; `mc.Set(ctxKeyEntrypoint, entrypointCapture{at: now(), body: bytes.Clone(payload.Body)})`; return `ModuleContext: mc`. Account is unknown here by design (§3.3 of analysis), so no rule evaluation. |
+| `processed_auction_request` | Take the `entrypointCapture` out of the context and clear the key, traced or not (NFR-02). `trace, ok := tracer.Begin(miCtx.AccountID, payload.Request.ID, capture.at)`; if `!ok` return. Incoming request: the capture if present, else marshal `payload.Request.BidRequest` with `now()`. `mc.Set(ctxKeyTrace, trace)`. If `mc == nil` (plan without entrypoint) create it. |
 | `bidder_request` | `trace := traceFrom(mc)`; if nil return. `trace.AddBidderRequest(now(), payload.Bidder, payload.Request.BidRequest)`. |
 | `raw_bidder_response` | `trace.AddBidderResponse(now(), payload.Bidder, payload.BidderResponse)`. |
 | `all_processed_bid_responses` | pass-through (returns `ModuleContext: mc`). Present only because the plan lists the stage. |
@@ -158,14 +158,21 @@ sequenceDiagram
 | `Tracer.partners`, `Tracer.rules` | `Begin` from concurrent requests | `Tracer.mu` around the whole decision (check-and-reserve is atomic → FR-10 AC2) |
 | `hookstage.ModuleContext` | executor + hooks | PBS's own `RWMutex`; the module only stores pointers |
 | `AuctionTrace` fields | concurrent `bidder_request` / `raw_bidder_response` goroutines, then `auction_response`, `exitpoint` | `AuctionTrace.mu`; marshalling happens **outside** the lock, append inside |
-| stdout | `exitpoint` of concurrent requests | `jsonEmitter.mu` + single `Write` of the complete line |
+| output queue | `exitpoint` of concurrent requests (producers), one writer goroutine (consumer) | buffered channel of 64 packets; `Emit` is a non-blocking send |
+| stdout | the writer goroutine only | `jsonEmitter.mu` + single `Write` of the complete line |
+| `Tracer.exhausted` | `Begin` when the last partner stops | `atomic.Bool`, read lock-free at `entrypoint` |
 
-No goroutines are created by the module. No channels. No blocking except the `Write`.
+The module creates one goroutine per process: the output writer, started by `Builder` and stopped by `Shutdown`. No hook blocks.
 
-The `Write` holds `jsonEmitter.mu`, so a stdout that stops draining stalls every **traced** auction at `exitpoint`, one behind the
-other; PBS's hook timer then reports a timeout and the auction proceeds, while the hook goroutine stays parked on the write (analysis
-§3.3). Untraced auctions never reach the emitter and are unaffected. The rules bound how many auctions can be traced, so the exposure
-is bounded too. Both properties are load criteria (`docs/test-specs/load.md`).
+**Stalled stdout.** `exitpoint` enqueues and returns; the writer goroutine is the only one that can block on stdout. When the queue
+is full (stdout stopped draining, or bursts above what it absorbs) the packet is dropped: `Emit` returns `ErrQueueFull`, the hook
+logs it with the running drop count, and the auction response is not delayed. This is the documented trade-off of FR-08 AC1a: the
+alternative, blocking the hook, would hold the client response for as long as the group timeout and park a goroutine per traced
+auction (analysis §3.3). `Shutdown` closes the queue and waits for the writer, so a graceful stop loses nothing that was queued.
+
+**Untraced traffic.** The `entrypoint` copy is the module's only cost before the account is known. It is released at
+`processed_auction_request` for every request, and skipped entirely once `Tracer.Exhausted()` reports that every partner is stopped,
+which with a finite rule set is the steady state of a long-running process.
 
 ## 6. Time
 

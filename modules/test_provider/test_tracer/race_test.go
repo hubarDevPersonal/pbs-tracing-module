@@ -1,6 +1,7 @@
 package testtracer
 
 import (
+	"errors"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
@@ -29,7 +30,7 @@ func TestRaceTracerBeginNeverExceedsAmount(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, ok := tr.Begin("p", "a"); ok {
+			if _, ok := tr.Begin("p", "a", time.Time{}); ok {
 				started.Add(1)
 			}
 		}()
@@ -46,7 +47,7 @@ func TestRaceTracerBeginNeverExceedsAmount(t *testing.T) {
 func TestRaceAuctionTraceConcurrentAppends(t *testing.T) {
 	tr, err := newTracer(testRules(), time.Now)
 	require.NoError(t, err)
-	trace, ok := tr.Begin(sampleRequestAccountID, "a")
+	trace, ok := tr.Begin(sampleRequestAccountID, "a", time.Time{})
 	require.True(t, ok)
 
 	const n = 64
@@ -161,4 +162,27 @@ func TestRaceModuleConcurrentRequests(t *testing.T) {
 	assert.Equal(t, 7, counts["p2"])
 	assert.Zero(t, counts["none"])
 	assert.Len(t, packets, 12)
+}
+
+// M-35. FR-08 AC1b: hooks still emitting while the process shuts down never panic; each emit either
+// lands in the queue before Close or is refused after it.
+func TestRaceAsyncEmitterEmitDuringClose(t *testing.T) {
+	out := &syncBuffer{}
+	em := newAsyncEmitter(newJSONEmitter(out), 8)
+
+	var wg sync.WaitGroup
+	var refused atomic.Int32
+	for i := range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := em.Emit(samplePacket(i)); errors.Is(err, ErrEmitterClosed) {
+				refused.Add(1)
+			}
+		}()
+	}
+	require.NoError(t, em.Close())
+	wg.Wait()
+
+	assert.Equal(t, 64, len(out.Packets(t))+int(refused.Load())+int(em.Dropped()), "every emit was written, refused or dropped")
 }

@@ -1,6 +1,7 @@
 package testtracer
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -492,4 +493,58 @@ func TestModule_EmptyRuleSetTracesNothing(t *testing.T) {
 		runAuctionForBench(m, account, f)
 	}
 	assert.Empty(t, out.Lines())
+}
+
+// M-33. NFR-02: the entrypoint copy of a request that is not traced is released at
+// processed_auction_request, not kept until the request context dies.
+func TestProcessedAuction_ReleasesEntrypointCaptureWhenNotTraced(t *testing.T) {
+	m, out := newTestModule(t, testRules(), newFakeClock(testStart))
+	body := loadSampleRequest(t)
+
+	entry, err := m.HandleEntrypointHook(context.Background(), auctionCtx("", nil), entrypointPayload(body))
+	require.NoError(t, err)
+	mc := entry.ModuleContext
+	v, found := mc.Get(ctxKeyEntrypoint)
+	require.True(t, found)
+	require.NotNil(t, v, "the copy exists between entrypoint and the trigger decision")
+
+	_, err = m.HandleProcessedAuctionHook(context.Background(), auctionCtx("not-a-partner", mc), hookstage.ProcessedAuctionRequestPayload{Request: requestWrapperFrom(t, body)})
+	require.NoError(t, err)
+
+	v, _ = mc.Get(ctxKeyEntrypoint)
+	assert.Nil(t, v, "the copy is released once the request is known not to be traced")
+	assert.Empty(t, out.Lines())
+}
+
+// M-34. NFR-01: once every partner is stopped, entrypoint no longer copies the body of any request.
+func TestEntrypoint_SkipsBodyCopyWhenAllPartnersAreStopped(t *testing.T) {
+	m, _ := newTestModule(t, []Rule{{PartnerID: "p", Duration: time.Hour, TracePacketsAmount: 1}}, newFakeClock(testStart))
+	body := loadSampleRequest(t)
+
+	_, ok := m.tracer.Begin("p", "a", time.Time{})
+	require.True(t, ok)
+	require.True(t, m.tracer.Exhausted())
+
+	res, err := m.HandleEntrypointHook(context.Background(), auctionCtx("", nil), entrypointPayload(body))
+	require.NoError(t, err)
+	assert.Nil(t, res.ModuleContext, "no context is created and no body is copied")
+	assert.False(t, res.Reject)
+}
+
+// M-35. FR-08: Shutdown drains the asynchronous output, so a packet emitted right before the
+// process stops is still written.
+func TestModule_ShutdownDrainsQueuedPackets(t *testing.T) {
+	out := &syncBuffer{}
+	m, err := newModule(testRules(), newAsyncEmitter(newJSONEmitter(out), 8), newFakeClock(testStart).Now)
+	require.NoError(t, err)
+	f := newBenchFixture(t)
+
+	runAuctionForBench(m, sampleRequestAccountID, f)
+	require.NoError(t, m.Shutdown())
+	require.NoError(t, m.Shutdown(), "Shutdown is idempotent")
+
+	require.Len(t, out.Packets(t), 1)
+	sync, syncErr := newModule(testRules(), newJSONEmitter(out), time.Now)
+	require.NoError(t, syncErr)
+	assert.NoError(t, sync.Shutdown(), "a synchronous emitter has nothing to drain")
 }
