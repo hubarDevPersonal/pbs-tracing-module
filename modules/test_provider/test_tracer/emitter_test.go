@@ -11,23 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func samplePacket(idx int) TracePacket {
-	ts := testStart.Add(time.Duration(idx) * time.Second)
-	return TracePacket{
-		Module:          ModuleCode,
-		PartnerID:       sampleRequestAccountID,
-		Rule:            RuleView{PartnerID: sampleRequestAccountID, Duration: "10m0s", TracePacketsAmount: 3},
-		PacketIndex:     idx,
-		AuctionID:       "auction",
-		StartedAt:       ts,
-		CompletedAt:     ts.Add(300 * time.Millisecond),
-		IncomingRequest: &RequestPacket{Timestamp: ts, Body: json.RawMessage(`{"id":"auction"}`)},
-		BidderRequests:  []BidderRequestPacket{{Timestamp: ts, Bidder: "appnexus", Request: json.RawMessage(`{"id":"auction"}`)}},
-		BidderResponses: []BidderResponsePacket{{Timestamp: ts, Bidder: "appnexus", Response: BidderResponseView{Currency: "USD", Bids: []TypedBidView{}}}},
-		FinalResponse:   &ResponsePacket{Timestamp: ts, Body: json.RawMessage(`{"id":"auction","seatbid":[]}`)},
-	}
-}
-
 // M-16. FR-08 AC1
 func TestJSONEmitter_WritesOneLinePerPacket(t *testing.T) {
 	out := &syncBuffer{}

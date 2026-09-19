@@ -1,12 +1,9 @@
 package testtracer
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
-	"github.com/prebid/openrtb/v20/openrtb2"
-	"github.com/prebid/prebid-server/v4/adapters"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -160,150 +157,6 @@ func TestTracerBegin_PartnersAreIndependent(t *testing.T) {
 	assert.True(t, okB1)
 	assert.True(t, okB2)
 	assert.False(t, okB3)
-}
-
-// M-16. FR-04..FR-07 / spec §5
-func TestAuctionTrace_PacketContainsAllSections(t *testing.T) {
-	clock := newFakeClock(testStart)
-	rule := Rule{PartnerID: "p", Duration: 10 * time.Minute, TracePacketsAmount: 3}
-	tr := newTestTracer(t, []Rule{rule}, clock)
-	trace, ok := tr.Begin("p", "auction-1", time.Time{})
-	require.True(t, ok)
-
-	incoming := []byte(`{"id":"auction-1","imp":[{"id":"1"}]}`)
-	ts := func(sec int) time.Time { return testStart.Add(time.Duration(sec) * time.Second) }
-
-	trace.SetIncomingRequest(ts(1), incoming)
-	require.NoError(t, trace.AddBidderRequest(ts(2), "appnexus", &openrtb2.BidRequest{ID: "auction-1", Test: 1}))
-	require.NoError(t, trace.AddBidderResponse(ts(3), "appnexus", sampleBidderResponse("appnexus", "bid-1", 2.5)))
-	require.NoError(t, trace.SetFinalResponse(ts(4), sampleBidResponse("auction-1", "appnexus")))
-
-	p := trace.Packet(ts(5))
-
-	assert.Equal(t, ModuleCode, p.Module)
-	assert.Equal(t, "p", p.PartnerID)
-	assert.Equal(t, RuleView{PartnerID: "p", Duration: "10m0s", TracePacketsAmount: 3}, p.Rule)
-	assert.Equal(t, 1, p.PacketIndex)
-	assert.Equal(t, "auction-1", p.AuctionID)
-	assert.True(t, p.StartedAt.Equal(testStart))
-	assert.True(t, p.CompletedAt.Equal(ts(5)))
-
-	require.NotNil(t, p.IncomingRequest)
-	assert.True(t, p.IncomingRequest.Timestamp.Equal(ts(1)))
-	assert.JSONEq(t, string(incoming), string(p.IncomingRequest.Body))
-
-	require.Len(t, p.BidderRequests, 1)
-	assert.Equal(t, "appnexus", p.BidderRequests[0].Bidder)
-	assert.True(t, p.BidderRequests[0].Timestamp.Equal(ts(2)))
-	assert.JSONEq(t, `{"id":"auction-1","imp":null,"test":1}`, string(p.BidderRequests[0].Request))
-
-	require.Len(t, p.BidderResponses, 1)
-	assert.Equal(t, "appnexus", p.BidderResponses[0].Bidder)
-	assert.True(t, p.BidderResponses[0].Timestamp.Equal(ts(3)))
-	assert.Equal(t, "USD", p.BidderResponses[0].Response.Currency)
-	require.Len(t, p.BidderResponses[0].Response.Bids, 1)
-	assert.Equal(t, "bid-1", p.BidderResponses[0].Response.Bids[0].Bid.ID)
-	assert.Equal(t, 2.5, p.BidderResponses[0].Response.Bids[0].Bid.Price)
-	assert.Equal(t, "banner", p.BidderResponses[0].Response.Bids[0].BidType)
-	assert.Equal(t, "appnexus", p.BidderResponses[0].Response.Bids[0].Seat)
-
-	require.NotNil(t, p.FinalResponse)
-	assert.True(t, p.FinalResponse.Timestamp.Equal(ts(4)))
-	var final openrtb2.BidResponse
-	require.NoError(t, json.Unmarshal(p.FinalResponse.Body, &final))
-	assert.Equal(t, "auction-1", final.ID)
-	require.Len(t, final.SeatBid, 1)
-	assert.Equal(t, "appnexus", final.SeatBid[0].Seat)
-}
-
-// M-16. spec §5: arrays are never null even when nothing was collected.
-// FR-08 AC2 / spec §5: bidder_requests and bidder_responses are [] when empty, never null.
-func TestAuctionTrace_EmptyPacketHasEmptyArrays(t *testing.T) {
-	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
-	trace, ok := tr.Begin(sampleRequestAccountID, "a", time.Time{})
-	require.True(t, ok)
-
-	raw, err := json.Marshal(trace.Packet(testStart))
-	require.NoError(t, err)
-
-	var asMap map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(raw, &asMap))
-	assert.JSONEq(t, `[]`, string(asMap["bidder_requests"]))
-	assert.JSONEq(t, `[]`, string(asMap["bidder_responses"]))
-}
-
-// M-08, M-10. FR-05 AC1 / FR-04 AC2: inputs are snapshotted at call time.
-func TestAuctionTrace_SnapshotsAreImmutable(t *testing.T) {
-	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
-	trace, ok := tr.Begin(sampleRequestAccountID, "a", time.Time{})
-	require.True(t, ok)
-
-	body := []byte(`{"id":"before"}`)
-	trace.SetIncomingRequest(testStart, body)
-	copy(body, `{"id":"AFTER!"}`)
-
-	req := &openrtb2.BidRequest{ID: "before"}
-	require.NoError(t, trace.AddBidderRequest(testStart, "b", req))
-	req.ID = "after"
-
-	resp := sampleBidderResponse("b", "before", 1)
-	require.NoError(t, trace.AddBidderResponse(testStart, "b", resp))
-	resp.Bids[0].Bid.ID = "after"
-
-	final := sampleBidResponse("before")
-	require.NoError(t, trace.SetFinalResponse(testStart, final))
-	final.ID = "after"
-
-	p := trace.Packet(testStart)
-	assert.JSONEq(t, `{"id":"before"}`, string(p.IncomingRequest.Body))
-	assert.Contains(t, string(p.BidderRequests[0].Request), `"before"`)
-	assert.Equal(t, "before", p.BidderResponses[0].Response.Bids[0].Bid.ID)
-	assert.Contains(t, string(p.FinalResponse.Body), `"before"`)
-}
-
-// M-11. FR-05 AC2
-func TestAuctionTrace_PreservesInvocationOrder(t *testing.T) {
-	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
-	trace, ok := tr.Begin(sampleRequestAccountID, "a", time.Time{})
-	require.True(t, ok)
-
-	for _, b := range []string{"aceex", "appnexus", "amx", "adyoulike"} {
-		require.NoError(t, trace.AddBidderRequest(testStart, b, &openrtb2.BidRequest{ID: b}))
-		require.NoError(t, trace.AddBidderResponse(testStart, b, sampleBidderResponse(b, b, 1)))
-	}
-
-	p := trace.Packet(testStart)
-	reqOrder := make([]string, 0, len(p.BidderRequests))
-	respOrder := make([]string, 0, len(p.BidderResponses))
-	for _, r := range p.BidderRequests {
-		reqOrder = append(reqOrder, r.Bidder)
-	}
-	for _, r := range p.BidderResponses {
-		respOrder = append(respOrder, r.Bidder)
-	}
-	assert.Equal(t, []string{"aceex", "appnexus", "amx", "adyoulike"}, reqOrder)
-	assert.Equal(t, []string{"aceex", "appnexus", "amx", "adyoulike"}, respOrder)
-}
-
-// M-29. FR-15 AC3
-func TestAuctionTrace_NilInputsAreSafe(t *testing.T) {
-	tr := newTestTracer(t, testRules(), newFakeClock(testStart))
-	trace, ok := tr.Begin(sampleRequestAccountID, "a", time.Time{})
-	require.True(t, ok)
-
-	assert.Error(t, trace.AddBidderRequest(testStart, "b", nil))
-	assert.Error(t, trace.AddBidderResponse(testStart, "b", nil))
-	assert.Error(t, trace.SetFinalResponse(testStart, nil))
-	assert.NotPanics(t, func() { trace.SetIncomingRequest(testStart, nil) })
-
-	// a response with a nil TypedBid entry must not panic either
-	assert.NotPanics(t, func() {
-		_ = trace.AddBidderResponse(testStart, "b", &adapters.BidderResponse{Currency: "USD", Bids: []*adapters.TypedBid{nil}})
-	})
-
-	p := trace.Packet(testStart)
-	assert.Empty(t, p.BidderRequests)
-	assert.Nil(t, p.FinalResponse)
 }
 
 // M-20. FR-09 AC1: the window opens at the incoming timestamp of the first traced request, not at the

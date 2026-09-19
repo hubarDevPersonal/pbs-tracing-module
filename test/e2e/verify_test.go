@@ -17,7 +17,7 @@ const moduleCode = "test_provider.test_tracer"
 // notFoundHookWarning is what PBS logs per planned stage when the module is configured but not compiled in.
 const notFoundHookWarning = "Not found hook while building hook execution plan: " + moduleCode
 
-// packet is the trace JSON contract (docs/02-specification.md §5), decoded independently of the module's
+// packet is the trace JSON contract (workspace/02-specification.md §5), decoded independently of the module's
 // own types so the e2e suite checks the contract, not the implementation.
 type packet struct {
 	Module          string    `json:"module"`
