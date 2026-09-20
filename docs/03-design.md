@@ -225,7 +225,7 @@ No account-level configuration is read (`miCtx.AccountConfig` ignored).
 - Per untraced request: the `entrypoint` body copy, because the account is unknown until `processed_auction_request`; one map lookup
   there; one module-context `Get` per later hook. No lock is taken: `Tracer.mu` is reached only when the account matches a rule.
 - Rules cap the number of traced auctions per process, so the steady-state cost of the module is the untraced path. Its allocation
-  budget is asserted in the default test suite; timing is measured by the benchmarks (`workspace/test-specs/load.md`).
+  budget is asserted in the default test suite; timing is measured by the benchmarks (`docs/test-specs/load.md`).
 - Trace memory is released at `exitpoint` by clearing the context key; the `ModuleContext` itself is owned by the executor and dies with the request.
 
 ## 10. Packaging (Docker)

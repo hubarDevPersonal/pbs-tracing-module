@@ -1,4 +1,3 @@
-# Adopted from hubarDevPersonal/lending-positions-parser; project-specific exclusions are commented.
 version: "2"
 
 run:

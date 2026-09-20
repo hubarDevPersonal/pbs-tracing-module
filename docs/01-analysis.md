@@ -20,8 +20,8 @@ or the number of collected traces reaches `TracePacketsAmount`, whichever comes 
 
 | File | Role | Findings |
 |------|------|----------|
-| `workspace/assessment/01-bid-request-example.json` | Sample OpenRTB 2.x request | `test: 1`, `ext.prebid.debug: true`, `ext.prebid.trace: "verbose"`. Four bidders in `imp[0].ext.prebid.bidder`: `aceex`, `appnexus`, `amx`, `adyoulike`. Publisher `id = "33415-10498"` and `ext.prebid.parentAccount = "664-025-677-881"`. |
-| `workspace/assessment/02-send-bid-request.sh` | `curl` wrapper | Same payload inline. `POST http://localhost:8080/openrtb2/auction`. |
+| `docs/assessment/01-bid-request-example.json` | Sample OpenRTB 2.x request | `test: 1`, `ext.prebid.debug: true`, `ext.prebid.trace: "verbose"`. Four bidders in `imp[0].ext.prebid.bidder`: `aceex`, `appnexus`, `amx`, `adyoulike`. Publisher `id = "33415-10498"` and `ext.prebid.parentAccount = "664-025-677-881"`. |
+| `docs/assessment/02-send-bid-request.sh` | `curl` wrapper | Same payload inline. `POST http://localhost:8080/openrtb2/auction`. |
 | `pbs.yaml` | PBS configuration | Hooks enabled; module `test_provider.test_tracer` enabled; host execution plan for `/openrtb2/auction` lists 7 stages: `entrypoint`, `processed_auction_request`, `bidder_request`, `raw_bidder_response`, `all_processed_bid_responses`, `auction_response`, `exitpoint`. `raw_auction_request` is **not** in the plan. Group timeout 120 000 ms. `account_required: false`, `account_defaults.debug_allow: true`. Adapters `appnexus` and `colossus` allow debug. |
 
 ### 2.1 Which value is `Account.ID` for the sample request
@@ -93,8 +93,8 @@ normative text is the PBS endpoint documentation — the `test` flag means bidde
 bid is guaranteed — and 204 is the adapter contract for no-bid. Getting a bid from adyoulike, aceex or appnexus requires ids
 issued by them.
 
-Practical notes for anyone repeating this: Proton VPN's resolver returns NXDOMAIN for ad-tech domains even with NetShield on
-"Don't block" — resolve via `8.8.8.8` (`docker run --dns 8.8.8.8` for PBS, `--resolve`/Host header for direct calls).
+Repeating this needs a resolver that answers for ad-tech domains: VPN resolvers commonly return NXDOMAIN for them even with
+filtering off. Pin one (`docker run --dns 8.8.8.8` for PBS, `--resolve` or a Host header for direct calls).
 
 Consequences for verification (the end-to-end suite in `test/e2e`):
 
@@ -209,13 +209,13 @@ Checked on 2026-09-16 against the two pages referenced by the assessment:
 | D6 | Source of item 1 | raw bytes at `entrypoint` / processed request | **raw entrypoint body + entrypoint timestamp**, attached retroactively when the trace starts; fallback to the processed request if the entrypoint capture is missing | The raw body is what the client sent; the fallback covers plans without `entrypoint`. |
 | D7 | Source of item 4 | `auction_response` / `exitpoint` | capture at `auction_response`; **replace with the `exitpoint` payload when it is an `*openrtb2.BidResponse`**; print at `exitpoint` | `exitpoint` is literally what is sent, including debug ext. Both stages always run together. |
 | D8 | Output format | pretty JSON / NDJSON | **one JSON object per line (NDJSON)**, UTF-8, `\n`-terminated | Machine-readable, safe under concurrency, no interleaving. |
-| D14 | Output path | write in the hook / bounded queue + writer goroutine / unbounded queue | **bounded queue (64) drained by one goroutine; drop, count and log on overflow; drain on `Shutdown`** | `exitpoint` runs before the response is encoded, so a blocking write delays the client (§3.3). Unbounded queues turn a dead stdout into unbounded memory. Loss on overflow is the price of the other two; the rules bound how many packets exist. |
-| D15 | Items 2 and 3 | hook payloads / HTTP bodies | **hook payloads**: the per-bidder request before `MakeRequests`, the adapter result after `MakeBids` | `exchange/bidder.go` runs the hooks around the adapter, and the HTTP bodies never reach a hook. Capturing them is a PBS-core change, not a module. Documented in spec FR-05, FR-06 and §6. |
 | D9 | Timestamps | unix ms / RFC 3339 | **RFC 3339 with nanoseconds, UTC** | Human- and machine-readable; unambiguous. |
 | D10 | Bidder response representation | marshal `adapters.BidderResponse` | **explicit snake_case DTO** | `adapters.BidderResponse` / `TypedBid` have no JSON tags. |
 | D11 | Amount limit under concurrent requests | count on completion / reserve on start | **reserve the slot at trigger time** | Guarantees the count never exceeds `TracePacketsAmount` even with parallel requests. |
 | D12 | Endpoint scoping | rely on plan / check in module | **both** — module ignores `miCtx.Endpoint != "/openrtb2/auction"` | Defence in depth; costs one string compare. |
 | D13 | Traces whose `exitpoint` never runs (early 4xx/5xx) | print partial / drop and keep the slot / drop and give the slot back | **drop; the slot is given back once its 5-minute lease expires unconfirmed** | A partial packet has no final response by definition. There is no hook PBS invokes on the 500 path (`auction.go` returns before `sendAuctionResponse`), so the loss cannot be detected at once; a lease longer than any auction PBS lets run detects it late but surely, and the amount then counts collected packets as the task says. See §5 item 6. |
+| D14 | Output path | write in the hook / bounded queue + writer goroutine / unbounded queue | **bounded queue (64) drained by one goroutine; drop, count and log on overflow; drain on `Shutdown`** | `exitpoint` runs before the response is encoded, so a blocking write delays the client (§3.3). Unbounded queues turn a dead stdout into unbounded memory. Loss on overflow is the price of the other two; the rules bound how many packets exist. |
+| D15 | Items 2 and 3 | hook payloads / HTTP bodies | **hook payloads**: the per-bidder request before `MakeRequests`, the adapter result after `MakeBids` | `exchange/bidder.go` runs the hooks around the adapter, and the HTTP bodies never reach a hook. Capturing them is a PBS-core change, not a module. Documented in spec FR-05, FR-06 and §6. |
 
 ## 5. Risks and open questions for the reviewer
 

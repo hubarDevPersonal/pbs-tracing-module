@@ -31,13 +31,13 @@ const (
 	maxResponseBytes = 4 << 20
 )
 
-// L-04 (workspace/test-specs/load.md). TestLoad_Auction holds a constant auction rate against a running PBS and requires every auction to be
+// L-04 (docs/test-specs/load.md). TestLoad_Auction holds a constant auction rate against a running PBS and requires every auction to be
 // answered: no transport errors, no non-2xx statuses, no dropped arrivals. Latency is reported, not
 // asserted, because live bidders dominate it.
 //
 //	go test -tags load -count=1 -v ./test/load -pbs-url http://localhost:8080 -rps 5 -duration 30s
 func TestLoad_Auction(t *testing.T) {
-	sample, err := os.ReadFile("../../workspace/assessment/01-bid-request-example.json")
+	sample, err := os.ReadFile("../../docs/assessment/01-bid-request-example.json")
 	require.NoError(t, err)
 	liveBid, err := os.ReadFile("../../testdata/bid-request-live-bid.json")
 	require.NoError(t, err)

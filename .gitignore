@@ -9,6 +9,3 @@ trace.ndjson
 .DS_Store
 .idea/
 .vscode/
-# local claude settings
-.claude/settings.local.json
-.claude/worktrees/

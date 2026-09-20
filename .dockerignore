@@ -1,7 +1,7 @@
 # The build context needs only the module and pbs.yaml.
 .git
 .github
-workspace
+docs
 scripts
 test
 testdata

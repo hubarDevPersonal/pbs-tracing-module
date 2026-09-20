@@ -25,7 +25,7 @@ const (
 
 var sampleBidders = []string{"aceex", "adyoulike", "amx", "appnexus"}
 
-// E-01 … E-06 (workspace/test-specs/e2e.md). TestE2E_TraceOnStdout runs the image with the assessment's pbs.yaml
+// E-01 … E-06 (docs/test-specs/e2e.md). TestE2E_TraceOnStdout runs the image with the assessment's pbs.yaml
 // against live bidders.
 //
 // Phase A sends the assessment request more often than its rule allows plus one request of an unknown
@@ -36,7 +36,7 @@ var sampleBidders = []string{"aceex", "adyoulike", "amx", "appnexus"}
 //
 //	make e2e    # builds the image, then: go test -tags e2e -count=1 -v ./test/e2e
 func TestE2E_TraceOnStdout(t *testing.T) {
-	sample, err := os.ReadFile("../../workspace/assessment/01-bid-request-example.json")
+	sample, err := os.ReadFile("../../docs/assessment/01-bid-request-example.json")
 	require.NoError(t, err)
 	liveBid, err := os.ReadFile("../../testdata/bid-request-live-bid.json")
 	require.NoError(t, err)

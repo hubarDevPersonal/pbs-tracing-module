@@ -85,7 +85,7 @@ type hlCell struct {
 	module  string // pprof share of samples on paths through the module
 }
 
-// L-10, L-11, L-12 (workspace/test-specs/load.md). TestHighload measures Prebid Server with the
+// L-10, L-11, L-12 (docs/test-specs/load.md). TestHighload measures Prebid Server with the
 // module against stub bidders on a ladder of arrival rates up to saturation and in a closed loop at
 // fixed concurrency, for hooks off, hooks on with nothing traced, and active tracing on every
 // auction. Each cell is repeated and reported as medians with the spread; PBS's CPU time is read
@@ -93,7 +93,7 @@ type hlCell struct {
 //
 //	make highload    # builds pbs-tracer:loadbench, then: go test -tags load -run TestHighload ./test/load
 func TestHighload(t *testing.T) {
-	raw, err := os.ReadFile("../../workspace/assessment/01-bid-request-example.json")
+	raw, err := os.ReadFile("../../docs/assessment/01-bid-request-example.json")
 	require.NoError(t, err)
 	sample := withoutDebug(t, raw)
 	startStubBidder(t, *stubAddr, *stubLatency)

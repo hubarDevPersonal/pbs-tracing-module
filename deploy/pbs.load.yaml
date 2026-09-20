@@ -101,7 +101,7 @@ hooks:
                   hook_impl_code: test_provider_test_tracer
 
 # ---------------------------------------------------------------------------------------------
-# Performance overlay (workspace/05-runbook.md §8). Everything above is the assessment's configuration
+# Performance overlay (docs/05-runbook.md §8). Everything above is the assessment's configuration
 # with production-like timeouts; everything below is additive.
 # ---------------------------------------------------------------------------------------------
 

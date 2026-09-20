@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copy the module package into a Prebid Server checkout and regenerate modules/builder.go.
-#   PBS_DIR=~/Dev/prebid-server scripts/install-module.sh
+#   PBS_DIR=../prebid-server scripts/install-module.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PBS_DIR="${PBS_DIR:?set PBS_DIR to a prebid-server checkout}"

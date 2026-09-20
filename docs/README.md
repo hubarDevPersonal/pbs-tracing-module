@@ -1,6 +1,6 @@
 # Deliverables — Prebid Server Tracing Module (`test_provider.test_tracer`)
 
-This folder is the working space of the assessment: the task statement with the files it came with (`assessment/`) and the engineering artefacts for the module. Project overview: [../README.md](../README.md).
+This folder holds the engineering documents for the module, and the task statement with the files it came with (`assessment/`). Project overview: [../README.md](../README.md).
 
 | # | Document | Purpose |
 |---|----------|---------|

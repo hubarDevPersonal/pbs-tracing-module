@@ -112,7 +112,7 @@ func BenchmarkEmitPacket(b *testing.B) {
 }
 
 // Load criteria that hold on every machine and therefore run in the default suite
-// (workspace/test-specs/load.md). Timing is measured by the benchmarks and the load test instead.
+// (docs/test-specs/load.md). Timing is measured by the benchmarks and the load test instead.
 
 // untracedAllocBudget bounds the allocations of a whole untraced auction with four bidders (all seven
 // hooks). Most of it is the entrypoint body copy, which happens before the account is known.
