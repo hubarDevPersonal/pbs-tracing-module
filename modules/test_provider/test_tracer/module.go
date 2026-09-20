@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"time"
 
 	"github.com/prebid/prebid-server/v4/hooks/hookstage"
@@ -56,7 +57,7 @@ type Module struct {
 }
 
 // Builder is the PBS entry point (see modules/builder.go). Module-level configuration is not used;
-// rules are hardcoded in rules.go by assessment requirement. Output goes to stdout through a bounded
+// rules are hardcoded in rules_default.go by assessment requirement. Output goes to stdout through a bounded
 // queue and one writer goroutine, so the hooks never wait for stdout (design §5).
 func Builder(_ json.RawMessage, _ moduledeps.ModuleDeps) (interface{}, error) {
 	return newModule(defaultRules, newAsyncEmitter(newJSONEmitter(os.Stdout), defaultQueueSize), time.Now)
@@ -104,6 +105,16 @@ func traceFrom(mc *hookstage.ModuleContext) *AuctionTrace {
 	}
 	trace, _ := v.(*AuctionTrace)
 	return trace
+}
+
+// recoverHook turns a panic inside a hook into a logged warning and a successful, empty result
+// (FR-15 AC3). PBS recovers hook panics itself, but its executor then waits for the whole group
+// timeout before answering the client; with the provided configuration that is two minutes.
+func recoverHook(err *error) {
+	if r := recover(); r != nil {
+		warnf("hook panic recovered: %v\n%s", r, debug.Stack())
+		*err = nil
+	}
 }
 
 func warnf(format string, args ...any) {

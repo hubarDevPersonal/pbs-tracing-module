@@ -138,6 +138,11 @@ func TestOverhead_BlockedStdoutStallsNoAuction(t *testing.T) {
 	require.NoError(t, err)
 	f := newBenchFixture(t)
 
+	// one traced auction first: its packet is taken by the writer, which blocks in Write
+	runAuctionForBench(m, sampleRequestAccountID, f)
+	<-w.entered
+
+	// then more traced auctions than the queue holds, and untraced ones meanwhile
 	const traced = queue + 10
 	done := make(chan struct{})
 	go func() {
@@ -154,8 +159,7 @@ func TestOverhead_BlockedStdoutStallsNoAuction(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("auctions were held by the stalled stdout")
 	}
-	<-w.entered
-	assert.EqualValues(t, traced-queue-1, em.Dropped(), "one packet is in the blocked write, queue holds the next ones, the rest are dropped")
+	assert.EqualValues(t, traced-queue, em.Dropped(), "the queue holds the next packets, the rest are dropped")
 
 	close(w.release)
 	require.NoError(t, m.Shutdown())

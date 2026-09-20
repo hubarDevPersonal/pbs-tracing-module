@@ -188,19 +188,86 @@ func TestTracer_ExhaustedWhenEveryPartnerIsStopped(t *testing.T) {
 		{PartnerID: "p1", Duration: time.Hour, TracePacketsAmount: 1},
 		{PartnerID: "p2", Duration: time.Second, TracePacketsAmount: 5},
 	}, clock)
-	assert.False(t, tr.Exhausted())
+	assert.False(t, tr.Exhausted(clock.Now()))
 
-	_, ok := tr.Begin("p1", "a", clock.Now()) // amount reached
+	a, ok := tr.Begin("p1", "a", clock.Now()) // amount reached, slot still pending
 	require.True(t, ok)
-	assert.False(t, tr.Exhausted(), "p2 is still active")
+	assert.False(t, tr.Exhausted(clock.Now()), "p2 is still active")
 
-	_, ok = tr.Begin("p2", "b", clock.Now())
+	b, ok := tr.Begin("p2", "b", clock.Now())
 	require.True(t, ok)
 	clock.Advance(2 * time.Second)
 	_, ok = tr.Begin("p2", "c", clock.Now()) // duration exceeded
 	require.False(t, ok)
-	assert.True(t, tr.Exhausted())
+	assert.False(t, tr.Exhausted(clock.Now()), "p1's pending slot could still be given back")
+
+	tr.Complete(a)
+	tr.Complete(b)
+	assert.True(t, tr.Exhausted(clock.Now()))
 
 	empty := newTestTracer(t, nil, clock)
-	assert.True(t, empty.Exhausted())
+	assert.True(t, empty.Exhausted(clock.Now()))
+}
+
+// M-36. FR-10, D13: a slot reserved by an auction that never reached exitpoint is given back once
+// its lease is over, so the amount counts collected packets; a written packet keeps its slot.
+func TestTracerBegin_ReclaimsSlotsOfAuctionsThatNeverCompleted(t *testing.T) {
+	clock := newFakeClock(testStart)
+	tr := newTestTracer(t, []Rule{{PartnerID: "p", Duration: 24 * time.Hour, TracePacketsAmount: 1}}, clock)
+
+	lost, ok := tr.Begin("p", "lost", clock.Now()) // PBS fails this auction: exitpoint never runs
+	require.True(t, ok)
+	_, ok = tr.Begin("p", "too-early", clock.Now())
+	assert.False(t, ok, "the slot is still leased")
+	st, _ := tr.Status("p")
+	assert.Equal(t, StopReasonAmount, st.StopReason)
+
+	clock.Advance(slotLease + time.Second)
+	written, ok := tr.Begin("p", "written", clock.Now())
+	require.True(t, ok, "the lease is over, the slot is given back")
+	assert.Equal(t, 1, written.PacketIndex())
+	st, _ = tr.Status("p")
+	assert.Equal(t, 1, st.Packets)
+	assert.False(t, lost.isEmitted())
+
+	require.True(t, written.tryMarkEmitted())
+	tr.Complete(written)
+	clock.Advance(slotLease + time.Second)
+	_, ok = tr.Begin("p", "after-written", clock.Now())
+	assert.False(t, ok, "a written packet keeps its slot for good")
+}
+
+// M-37. NFR-01: once every partner has started, the tracer knows the time after which no window is
+// open and reports exhaustion from then on, without waiting for a request of each partner.
+func TestTracer_ExhaustedAfterEveryWindowClosed(t *testing.T) {
+	clock := newFakeClock(testStart)
+	tr := newTestTracer(t, []Rule{
+		{PartnerID: "p1", Duration: time.Minute, TracePacketsAmount: 10},
+		{PartnerID: "p2", Duration: time.Hour, TracePacketsAmount: 10},
+	}, clock)
+
+	_, ok := tr.Begin("p1", "a", clock.Now())
+	require.True(t, ok)
+	assert.False(t, tr.Exhausted(clock.Now().Add(2*time.Hour)), "p2 has not started: its window is unknown")
+
+	_, ok = tr.Begin("p2", "b", clock.Now())
+	require.True(t, ok)
+	assert.False(t, tr.Exhausted(clock.Now().Add(time.Hour)), "p2's window is still open at its end")
+	assert.True(t, tr.Exhausted(clock.Now().Add(time.Hour+time.Nanosecond)))
+}
+
+// M-20. FR-09: the window is measured between request arrivals. A request that arrived inside the
+// window is traced even if its trigger decision comes after the window's end.
+func TestTracerBegin_WindowIsMeasuredBetweenArrivals(t *testing.T) {
+	clock := newFakeClock(testStart)
+	tr := newTestTracer(t, []Rule{{PartnerID: "p", Duration: time.Second, TracePacketsAmount: 10}}, clock)
+	_, ok := tr.Begin("p", "a1", clock.Now())
+	require.True(t, ok)
+
+	arrived := clock.Now().Add(900 * time.Millisecond)
+	clock.Advance(1100 * time.Millisecond) // triggered after the window's end
+	_, ok = tr.Begin("p", "a2", arrived)
+	assert.True(t, ok)
+	_, ok = tr.Begin("p", "a3", clock.Now())
+	assert.False(t, ok)
 }

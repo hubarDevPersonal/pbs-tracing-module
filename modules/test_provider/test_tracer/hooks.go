@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/prebid/openrtb/v20/openrtb2"
 	"github.com/prebid/prebid-server/v4/hooks/hookstage"
@@ -14,14 +15,15 @@ func (m *Module) HandleEntrypointHook(
 	_ context.Context,
 	miCtx hookstage.ModuleInvocationContext,
 	payload hookstage.EntrypointPayload,
-) (hookstage.HookResult[hookstage.EntrypointPayload], error) {
-	result := hookstage.HookResult[hookstage.EntrypointPayload]{ModuleContext: miCtx.ModuleContext}
+) (result hookstage.HookResult[hookstage.EntrypointPayload], err error) {
+	defer recoverHook(&err)
+	result = hookstage.HookResult[hookstage.EntrypointPayload]{ModuleContext: miCtx.ModuleContext}
 	if !isAuction(miCtx) {
 		return result, nil
 	}
 	// The account is unknown at this stage (design §3); stash the raw body and decide later.
 	// Once every partner is stopped no request can be traced, so the copy is skipped (NFR-01).
-	if m.tracer.Exhausted() {
+	if m.tracer.Exhausted(m.now()) {
 		return result, nil
 	}
 	mc := miCtx.ModuleContext
@@ -38,8 +40,9 @@ func (m *Module) HandleProcessedAuctionHook(
 	_ context.Context,
 	miCtx hookstage.ModuleInvocationContext,
 	payload hookstage.ProcessedAuctionRequestPayload,
-) (hookstage.HookResult[hookstage.ProcessedAuctionRequestPayload], error) {
-	result := hookstage.HookResult[hookstage.ProcessedAuctionRequestPayload]{ModuleContext: miCtx.ModuleContext}
+) (result hookstage.HookResult[hookstage.ProcessedAuctionRequestPayload], err error) {
+	defer recoverHook(&err)
+	result = hookstage.HookResult[hookstage.ProcessedAuctionRequestPayload]{ModuleContext: miCtx.ModuleContext}
 	if !isAuction(miCtx) || payload.Request == nil || payload.Request.BidRequest == nil {
 		return result, nil
 	}
@@ -76,8 +79,9 @@ func (m *Module) HandleBidderRequestHook(
 	_ context.Context,
 	miCtx hookstage.ModuleInvocationContext,
 	payload hookstage.BidderRequestPayload,
-) (hookstage.HookResult[hookstage.BidderRequestPayload], error) {
-	result := hookstage.HookResult[hookstage.BidderRequestPayload]{ModuleContext: miCtx.ModuleContext}
+) (result hookstage.HookResult[hookstage.BidderRequestPayload], err error) {
+	defer recoverHook(&err)
+	result = hookstage.HookResult[hookstage.BidderRequestPayload]{ModuleContext: miCtx.ModuleContext}
 	if !isAuction(miCtx) {
 		return result, nil
 	}
@@ -100,8 +104,9 @@ func (m *Module) HandleRawBidderResponseHook(
 	_ context.Context,
 	miCtx hookstage.ModuleInvocationContext,
 	payload hookstage.RawBidderResponsePayload,
-) (hookstage.HookResult[hookstage.RawBidderResponsePayload], error) {
-	result := hookstage.HookResult[hookstage.RawBidderResponsePayload]{ModuleContext: miCtx.ModuleContext}
+) (result hookstage.HookResult[hookstage.RawBidderResponsePayload], err error) {
+	defer recoverHook(&err)
+	result = hookstage.HookResult[hookstage.RawBidderResponsePayload]{ModuleContext: miCtx.ModuleContext}
 	if !isAuction(miCtx) {
 		return result, nil
 	}
@@ -124,7 +129,8 @@ func (m *Module) HandleAllProcessedBidResponsesHook(
 	_ context.Context,
 	miCtx hookstage.ModuleInvocationContext,
 	_ hookstage.AllProcessedBidResponsesPayload,
-) (hookstage.HookResult[hookstage.AllProcessedBidResponsesPayload], error) {
+) (result hookstage.HookResult[hookstage.AllProcessedBidResponsesPayload], err error) {
+	defer recoverHook(&err)
 	return hookstage.HookResult[hookstage.AllProcessedBidResponsesPayload]{ModuleContext: miCtx.ModuleContext}, nil
 }
 
@@ -133,8 +139,9 @@ func (m *Module) HandleAuctionResponseHook(
 	_ context.Context,
 	miCtx hookstage.ModuleInvocationContext,
 	payload hookstage.AuctionResponsePayload,
-) (hookstage.HookResult[hookstage.AuctionResponsePayload], error) {
-	result := hookstage.HookResult[hookstage.AuctionResponsePayload]{ModuleContext: miCtx.ModuleContext}
+) (result hookstage.HookResult[hookstage.AuctionResponsePayload], err error) {
+	defer recoverHook(&err)
+	result = hookstage.HookResult[hookstage.AuctionResponsePayload]{ModuleContext: miCtx.ModuleContext}
 	if !isAuction(miCtx) {
 		return result, nil
 	}
@@ -142,9 +149,7 @@ func (m *Module) HandleAuctionResponseHook(
 	if trace == nil || payload.BidResponse == nil {
 		return result, nil
 	}
-	if err := trace.SetFinalResponse(m.now(), payload.BidResponse); err != nil {
-		warnf("auction %s: %v", trace.AuctionID(), err)
-	}
+	trace.RememberAuctionResponse(m.now(), payload.BidResponse)
 	return result, nil
 }
 
@@ -153,8 +158,9 @@ func (m *Module) HandleExitpointHook(
 	_ context.Context,
 	miCtx hookstage.ModuleInvocationContext,
 	payload hookstage.ExitpointPayload,
-) (hookstage.HookResult[hookstage.ExitpointPayload], error) {
-	result := hookstage.HookResult[hookstage.ExitpointPayload]{ModuleContext: miCtx.ModuleContext}
+) (result hookstage.HookResult[hookstage.ExitpointPayload], err error) {
+	defer recoverHook(&err)
+	result = hookstage.HookResult[hookstage.ExitpointPayload]{ModuleContext: miCtx.ModuleContext}
 	if !isAuction(miCtx) {
 		return result, nil
 	}
@@ -162,18 +168,25 @@ func (m *Module) HandleExitpointHook(
 	if trace == nil {
 		return result, nil
 	}
-	// The exitpoint payload is the very object PBS encodes to the client (FR-07 AC2).
-	if resp, ok := payload.Response.(*openrtb2.BidResponse); ok && resp != nil {
-		if err := trace.SetFinalResponse(m.now(), resp); err != nil {
+	// The exitpoint payload is the very object PBS encodes to the client (FR-07 AC2); the
+	// auction_response capture stands in when it is something else.
+	resp, isBidResponse := payload.Response.(*openrtb2.BidResponse)
+	at := m.now()
+	if !isBidResponse || resp == nil {
+		resp, at = trace.AuctionResponse()
+	}
+	if resp != nil {
+		if err := trace.SetFinalResponse(at, resp); err != nil {
 			warnf("auction %s: %v", trace.AuctionID(), err)
 		}
 	}
 	if !trace.tryMarkEmitted() { // FR-08 AC3
 		return result, nil
 	}
-	if err := m.emitter.Emit(trace.Packet(m.now())); err != nil {
+	if err := m.emitter.Emit(trace.Packet(m.now())); err != nil && !errors.Is(err, ErrQueueFull) { // drops are logged by the emitter, rate-limited
 		warnf("auction %s: %v", trace.AuctionID(), err)
 	}
+	m.tracer.Complete(trace)                  // the slot is confirmed
 	miCtx.ModuleContext.Set(ctxKeyTrace, nil) // NFR-02: release the per-request state
 	return result, nil
 }

@@ -59,7 +59,7 @@ Repeat the request; lines stop appearing once `TracePacketsAmount` for `664-025-
 On 2026-09-16 all four bidders answered HTTP 204 for the sample (egress: Portugal), also when called directly with request variants.
 PBS then does not invoke `raw_bidder_response`, so `bidder_responses` is `[]` and `final_response.body.seatbid` is absent. This is PBS
 behaviour, not a module defect; items 1, 2 and 4 are still produced. Item 3 is proven by the unit and integration tests and shows up
-in e2e as soon as any bidder actually bids (e.g., from a network where appnexus test mode returns a creative).
+in e2e as soon as any bidder actually bids.
 
 To see item 3 populated live, send [testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json): the sample plus
 onetag's documented test publisher (`pubId 386276e072`, returns a $2.00 test creative), resolved to the second rule
@@ -84,13 +84,13 @@ for `test_provider.test_tracer`; each invocation should show `"status": "success
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `pbs.log`: `Not found hook while building hook execution plan: test_provider.test_tracer …` on every request | module not compiled in (`builder.go` not regenerated) or `hooks.modules.test_provider.test_tracer.enabled` false | rerun `go generate ./modules/...`, rebuild, check config |
-| PBS exits with `failed to init "test_provider.test_tracer" module: …` | hardcoded rules failed validation | fix `modules/test_provider/test_tracer/rules.go` (empty PartnerID, non-positive Duration/amount, duplicate PartnerID) |
-| No trace line although account matches | partner already stopped (amount/duration) or process restarted mid-window | restart PBS to reset state; check `Duration` in `rules.go` |
+| PBS exits with `failed to init "test_provider.test_tracer" module: …` | hardcoded rules failed validation | fix `modules/test_provider/test_tracer/rules_default.go` (empty PartnerID, non-positive Duration/amount, duplicate PartnerID) |
+| No trace line although account matches | partner already stopped (amount/duration) or process restarted mid-window | restart PBS to reset state; check `Duration` in `rules_default.go` |
 | Trace printed but `bidder_responses: []` | bidders returned 204/error → PBS skipped `raw_bidder_response` | expected for the sample's bidders; use the live-bid request (§5) |
 | `ext.errors.prebid`: `Error sending the request to Prebid Cache: Post "///cache"` | the sample asks for bid caching (`ext.prebid.cache`) and `pbs.yaml` configures no cache host | harmless for tracing; set `cache.host` or drop `ext.prebid.cache` |
 | stdout mixed with logs | logs not redirected | run with `2>pbs.log` |
 | Port 8080 busy | another PBS/service | `lsof -iTCP:8080 -sTCP:LISTEN` |
-| Partner stopped with fewer packets than `TracePacketsAmount` | an auction failed with 4xx/5xx after the trace started; PBS skips `exitpoint` on that path, the slot is consumed (analysis §5.6) | restart PBS to reset; check `pbs.log` for `Critical error while running the auction` |
+| Partner stopped with fewer packets than `TracePacketsAmount` | an auction failed with 4xx/5xx after the trace started; PBS skips `exitpoint` on that path and the slot stays reserved for 5 minutes (analysis §5.6) | wait for the lease to expire or restart PBS; check `pbs.log` for `Critical error while running the auction` |
 | PBS exits after a traced auction when stdout is a pipe | reader of the pipe exited → `EPIPE` on fd 1 terminates the process (analysis §5.8) | redirect stdout to a file or use a log driver |
 | `:6060` / `:9100` not reachable from another host | published on `127.0.0.1` only on purpose: pprof and metrics are unauthenticated | use an SSH tunnel or an authenticated reverse proxy |
 
@@ -127,7 +127,7 @@ Needs Docker and a free port 18081 on the host. The container reaches the stub a
 `make perf` runs the same suite against the `perf` profile of `docker-compose.yml`: [deploy/pbs.perf.yaml](../deploy/pbs.perf.yaml)
 (HTTP client pools and dial timeouts, clamped auction timeouts, simulated bidder throttling, Prometheus on `:9100`) and a caching
 CoreDNS sidecar ([deploy/coredns/Corefile](../deploy/coredns/Corefile), metrics on `:9153`). While the load runs it captures a CPU
-profile from the admin port and diffs the Prometheus and CoreDNS counters. The report lands in `$WORK/perf-report.md`.
+profile from the admin port and diffs the Prometheus and CoreDNS counters. The report lands in `$WORK/perf-report.md`; `WORK` is a temporary directory the script creates and prints, set `WORK=` to choose it.
 
 | Port | What | Exposure |
 |------|------|----------|

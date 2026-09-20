@@ -57,7 +57,7 @@ For every `raw_bidder_response` invocation of a traced request:
 - AC2: A bidder that PBS never calls `raw_bidder_response` for (HTTP 204, adapter error, timeout) has no entry; the packet is still printed.
 
 ### FR-07 Final auction response (item 4)
-- AC1: At `auction_response`, record `{timestamp, body}` from `payload.BidResponse`.
+- AC1: At `auction_response`, remember `payload.BidResponse` and the invocation time; the body is marshaled once, at `exitpoint`.
 - AC2: At `exitpoint`, if `payload.Response` is an `*openrtb2.BidResponse`, the recorded final response is replaced by it (timestamp = exitpoint time). Otherwise the `auction_response` capture is kept.
 - AC3: `final_response.body` is the JSON of the object; PBS debug/trace data under `ext` is included as-is.
 
@@ -67,7 +67,8 @@ For every `raw_bidder_response` invocation of a traced request:
   (64 packets); when it is full the packet is **dropped**, counted and logged to stderr, and the auction is unaffected. Packets of
   one process are written in the order they were enqueued.
 - AC1b: On graceful shutdown of PBS the module drains the queue before returning, so packets of auctions completed just before the
-  stop are written. Packets still queued when the process is killed are lost.
+  stop are written. It waits at most 5 s: a stdout that does not drain must not hold PBS's shutdown. Packets still queued when the
+  process is killed or when the wait runs out are lost and logged.
 - AC2: Output is valid UTF-8 JSON; embedded requests/responses are JSON values, not escaped strings.
 - AC3: A second `exitpoint` invocation for the same request does not print again.
 - AC4: Nothing is printed for non-traced requests.
@@ -76,25 +77,32 @@ For every `raw_bidder_response` invocation of a traced request:
 ### FR-09 Stop condition — time limit
 Let `first` be the timestamp of the partner's first traced request: the `entrypoint` time of that request, i.e. the
 `incoming_request.timestamp` it reports (the `processed_auction_request` time when the entrypoint capture is unavailable). A new
-trace is refused when `now - first > Duration`, `now` being the time of the trigger decision. When several first auctions of a
-partner race, the window opens at the incoming timestamp of the one that reserves its slot first.
+trace for a request that arrived at `arrived` (its own entrypoint time, same fallback) is refused when `arrived - first > Duration`:
+the window is measured between request arrivals, the times the trace reports, not between trigger decisions. When several first
+auctions of a partner race, the window opens at the incoming timestamp of the one that reserves its slot first.
 - AC1: `now - first == Duration` still traces; `Duration + 1ns` does not.
 - AC2: The partner is marked stopped with reason `duration_exceeded`.
 
 ### FR-10 Stop condition — amount limit
-A new trace is refused when the number of traces **started** for the partner equals `TracePacketsAmount`.
+A trace **reserves** one of the partner's `TracePacketsAmount` slots when it starts and **confirms** it when its packet is written
+at `exitpoint`. A new trace is refused while every slot is reserved or confirmed.
 - AC1: With `TracePacketsAmount = 2`, the 1st and 2nd matching requests are traced, the 3rd is not.
-- AC2: Under concurrent requests the number of started traces never exceeds `TracePacketsAmount` (slot reservation at start).
-- AC3: The partner is marked stopped with reason `amount_reached`.
+- AC2: Under concurrent requests the number of slots held never exceeds `TracePacketsAmount` (reservation at start, under one lock).
+- AC3: The partner is marked stopped with reason `amount_reached` while all slots are held.
+- AC4: A reservation that is not confirmed within 5 minutes (PBS failed the auction after the trigger, so `exitpoint` never ran)
+  is given back: the next matching request takes the slot and the partner is no longer stopped for amount. A confirmed slot is never
+  given back. The amount therefore counts collected packets, and an auction that PBS would still be running after 5 minutes is the
+  only way to exceed it, by one.
 
 ### FR-11 Whichever occurs first; no re-arm
-- AC1: Once stopped for either reason the partner is never traced again during the process lifetime, regardless of clock progress.
+- AC1: Once stopped for duration the partner is never traced again during the process lifetime, regardless of clock progress; once
+  stopped for amount it is traced again only through FR-10 AC4, and only while its window is open.
 - AC2: Partners are independent: stopping one does not affect another.
 
 ### FR-12 In-flight traces complete
 - AC1: A trace started before a stop condition is fully collected and printed at its `exitpoint`.
-- Known limitation: if PBS fails the auction with 4xx/5xx after the trace started, `exitpoint` is not invoked and the packet is
-  neither printed nor its slot released (analysis §5.6).
+- If PBS fails the auction with 4xx/5xx after the trace started, `exitpoint` is not invoked, nothing is printed, and the slot is
+  given back after the lease of FR-10 AC4 (analysis §5.6).
 
 ### FR-13 Zero side effects for non-traced requests
 - AC1: No output, no mutation, no error for requests with no matching rule or a stopped partner.
@@ -105,7 +113,8 @@ A new trace is refused when the number of traces **started** for the partner equ
 ### FR-15 Never interfere with the auction
 - AC1: Every `HookResult` has `Reject == false`, `NbrCode == 0`, and an empty `ChangeSet`.
 - AC2: Hooks return `nil` error on internal problems (e.g., marshal failure) and log the problem to stderr instead; a failing hook must never fail the auction.
-- AC3: Hooks never panic on nil `ModuleContext`, nil payload fields, or unexpected payload types.
+- AC3: Hooks never panic on nil `ModuleContext`, nil payload fields, or unexpected payload types; a panic that happens anyway is
+  recovered inside the hook and logged, and the hook returns success, so PBS does not wait for the group timeout.
 
 ### FR-16 Concurrency safety
 - AC1: Module-level partner state and per-request trace state are safe under concurrent hook invocations (`go test -race`).
@@ -115,10 +124,10 @@ A new trace is refused when the number of traces **started** for the partner equ
 
 | ID | Requirement |
 |----|-------------|
-| NFR-01 | Hook latency: O(size of payload) marshalling only; no network or disk I/O; no hook waits for stdout (FR-08 AC1a). Once every partner is stopped, `entrypoint` no longer copies request bodies. |
+| NFR-01 | Hook latency: O(size of payload) marshalling only; no network or disk I/O; no hook waits for stdout (FR-08 AC1a). Once no request can be traced any more (every partner stopped for good, or every partner started and every window closed) `entrypoint` no longer copies request bodies. |
 | NFR-02 | Memory: module-level state bounded by number of rules plus the output queue (FR-08 AC1a); the entrypoint body copy is released at `processed_auction_request` for requests that are not traced, and the trace at `exitpoint` for those that are. |
 | NFR-03 | Compatibility: builds with the PBS module's Go version (1.25) and the v4 module path; no new third-party dependencies. |
-| NFR-04 | Code quality: `gofmt`, `go vet` clean; unit tests in the same package; concurrency tests named `TestRace*` per PBS `workspace/developers/automated-tests.md`. |
+| NFR-04 | Code quality: `gofmt`, `go vet` clean; unit tests in the same package; concurrency tests named `TestRace*` per PBS's own `docs/developers/automated-tests.md`. |
 | NFR-05 | Testability: clock (`func() time.Time`) and output writer (`io.Writer`) are injectable; production wiring uses `time.Now` and `os.Stdout`. |
 | NFR-06 | Observability: internal errors are logged via PBS `logger` (glog → stderr) with the module code prefix; no logging on the happy path other than the trace itself. |
 | NFR-07 | Module rules compliance (docs.prebid.org): the module creates no bids, adds nothing to creatives, makes no outbound calls and does not mutate payloads; user data in traces is written only to the local process stdout and is never transmitted. |
@@ -129,19 +138,24 @@ A new trace is refused when the number of traces **started** for the partner equ
 Rule           { PartnerID, Duration, TracePacketsAmount }              // immutable, hardcoded
 PartnerState   { firstTracedAt time.Time, packets int, stopReason }     // per PartnerID, module-global, mutex-guarded
 
-Begin(partnerID, now):
+Begin(partnerID, incomingAt, now):                                     // incomingAt: entrypoint time of the request
   rule, ok := rules[partnerID];            if !ok            → not traced
   st := state[partnerID] (create on first use)
-  if st.stopReason != ""                                     → not traced
-  if st.packets == 0: st.firstTracedAt = now
-  elif now - st.firstTracedAt > rule.Duration: st.stopReason = duration_exceeded → not traced
-  if st.packets >= rule.TracePacketsAmount: st.stopReason = amount_reached      → not traced
-  st.packets++                                               // slot reserved
+  if st.stopReason == duration_exceeded                      → not traced
+  if st.packets == 0: st.firstTracedAt = incomingAt
+  elif incomingAt - st.firstTracedAt > rule.Duration: st.stopReason = duration_exceeded → not traced
+  if st.packets >= rule.TracePacketsAmount:
+    give back pending slots older than the lease (now - startedAt > 5 min) that never wrote a packet
+    if still st.packets >= rule.TracePacketsAmount: st.stopReason = amount_reached → not traced
+  st.packets++; st.pending += trace                          // slot reserved
   if st.packets == rule.TracePacketsAmount: st.stopReason = amount_reached      // further requests refused
   → traced, packetIndex = st.packets
+
+Complete(trace):  st.pending -= trace                        // slot confirmed at exitpoint
 ```
 
-State diagram per partner: `idle → tracing → stopped(duration_exceeded | amount_reached)`; `stopped` is terminal.
+State diagram per partner: `idle → tracing → stopped(duration_exceeded | amount_reached)`; `duration_exceeded` is terminal,
+`amount_reached` returns to `tracing` when a lease expires (FR-10 AC4) and is terminal once every slot is confirmed.
 
 ## 5. Trace JSON contract
 
@@ -179,7 +193,9 @@ are objects; `final_response` is `null` only in the degenerate case where neithe
 
 - `/openrtb2/amp`, `/openrtb2/video`, and any non-auction endpoint.
 - Runtime configuration of rules (account config, YAML), persistence across restarts, re-arming.
-- Truncation, sampling, redaction of PII in traces.
+- Truncation, sampling, redaction of PII in traces. Items 1 and 4 are written as PBS received and sent them; PBS's activity
+  controls scrub only the `processed_auction_request` and `bidder_request` payloads, so user ids, IPs and geo in the raw request
+  and in the response reach stdout. Deploy with stdout going to a store with the same access rules as the request logs.
 - Tracing of `all_processed_bid_responses` content (stage is implemented as a pass-through only).
 - The bytes exchanged with bidders over HTTP. PBS module hooks expose the per-bidder OpenRTB request before the adapter builds its
   HTTP calls and the adapter's parsed result after it read the HTTP response; the HTTP bodies themselves are only available inside

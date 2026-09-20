@@ -119,6 +119,25 @@ func TestAsyncEmitter_DeliversInOrderAndDrainsOnClose(t *testing.T) {
 	assert.Zero(t, em.Dropped())
 }
 
+// M-35. FR-08 AC1b: Close does not wait forever for a stdout nobody reads.
+func TestAsyncEmitter_CloseGivesUpOnStalledStdout(t *testing.T) {
+	old := closeTimeout
+	closeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { closeTimeout = old })
+
+	w := &blockingWriter{entered: make(chan struct{}), release: make(chan struct{})}
+	em := newAsyncEmitter(newJSONEmitter(w), 4)
+	require.NoError(t, em.Emit(samplePacket(1)))
+	<-w.entered
+	require.NoError(t, em.Emit(samplePacket(2)))
+
+	start := time.Now()
+	err := em.Close()
+	assert.Less(t, time.Since(start), 2*time.Second)
+	assert.ErrorContains(t, err, "2 packets not written")
+	close(w.release)
+}
+
 // M-35. NFR-01: with stdout stalled the queue fills up; further packets are dropped and counted, and
 // Emit still returns at once. The queued packets are written once stdout resumes.
 func TestAsyncEmitter_DropsWhenQueueIsFullAndStdoutStalls(t *testing.T) {

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +36,9 @@ const (
 
 	metricHookCount = "prebid_server_modules_test_provider_test_tracer_duration_count"
 	metricHookSum   = "prebid_server_modules_test_provider_test_tracer_duration_sum"
+	metricTimeouts  = "prebid_server_modules_test_provider_test_tracer_timeouts"
+	metricFailed    = "prebid_server_modules_test_provider_test_tracer_failed"
+	metricErrors    = "prebid_server_modules_test_provider_test_tracer_execution_errors"
 )
 
 type traces int
@@ -58,14 +63,14 @@ type benchResult struct {
 	report     Report
 	hookCalls  float64
 	hookMean   time.Duration
+	hookBad    float64 // timeouts + failures + execution errors, must be 0
 	gcCycles   float64 // during the run
-	heapInuse  float64 // after the run
 	rssBytes   int64   // after the run, docker stats (includes page cache)
 	traceLines int
 	dropped    int
 }
 
-// L-05 … L-09 (workspace/test-specs/load.md). TestLoadBench measures Prebid Server with the module against
+// L-05, L-06, L-07, L-08, L-09 (workspace/test-specs/load.md). TestLoadBench measures Prebid Server with the module against
 // stub bidders on the host, one fresh container per scenario, and compares hooks off, hooks on with
 // nothing traced, active tracing for one and for three partners, a large payload, and a stdout that
 // nobody reads. It fails on any auction error, on a trace count that does not match the scenario, and
@@ -73,8 +78,12 @@ type benchResult struct {
 //
 //	make load-bench    # builds pbs-tracer:loadbench, then: go test -tags load -run TestLoadBench ./test/load
 func TestLoadBench(t *testing.T) {
-	sample, err := os.ReadFile("../../workspace/assessment/01-bid-request-example.json")
+	raw, err := os.ReadFile("../../workspace/assessment/01-bid-request-example.json")
 	require.NoError(t, err)
+	// The sample asks for ext.prebid.debug and trace: "verbose". With hooks on, PBS then appends a
+	// per-invocation hook trace to every response, which would make "hooks off" and "hooks on"
+	// compare different responses. Production traffic carries neither, so the bench strips them.
+	sample := withoutDebug(t, raw)
 	startStubBidder(t, *stubAddr, *stubLatency)
 
 	scenarios := []benchScenario{
@@ -106,7 +115,7 @@ func runScenario(t *testing.T, sc benchScenario) benchResult {
 	for range 20 {
 		auction(t, client, pbs.URL, sc.bodies[0])
 	}
-	before := pbs.metrics(t, metricHookCount, metricHookSum)
+	before := pbs.metrics(t, metricHookCount, metricHookSum, metricTimeouts, metricFailed, metricErrors)
 	memBefore := pbs.memStats(t)
 	stdoutBefore, _ := containerLogs(t)
 
@@ -124,18 +133,19 @@ func runScenario(t *testing.T, sc benchScenario) benchResult {
 	require.NoError(t, err)
 
 	time.Sleep(time.Second) // let the last packets reach stdout
-	after := pbs.metrics(t, metricHookCount, metricHookSum)
+	after := pbs.metrics(t, metricHookCount, metricHookSum, metricTimeouts, metricFailed, metricErrors)
 	memAfter := pbs.memStats(t)
 	stdout, stderr := containerLogs(t)
 	res := benchResult{
-		scenario:   sc.name,
-		report:     report,
-		hookCalls:  after[metricHookCount] - before[metricHookCount],
+		scenario:  sc.name,
+		report:    report,
+		hookCalls: after[metricHookCount] - before[metricHookCount],
+		hookBad: after[metricTimeouts] - before[metricTimeouts] + after[metricFailed] - before[metricFailed] +
+			after[metricErrors] - before[metricErrors],
 		gcCycles:   memAfter.NumGC - memBefore.NumGC,
-		heapInuse:  memAfter.HeapInuse,
 		rssBytes:   rss(t),
 		traceLines: bytes.Count(stdout[len(stdoutBefore):], []byte("\n")),
-		dropped:    bytes.Count(stderr, []byte("packet dropped")),
+		dropped:    droppedPackets(stderr),
 	}
 	if res.hookCalls > 0 {
 		res.hookMean = time.Duration((after[metricHookSum] - before[metricHookSum]) / res.hookCalls * float64(time.Second))
@@ -151,6 +161,7 @@ func runScenario(t *testing.T, sc benchScenario) benchResult {
 	// the module ran exactly when it should
 	if sc.hooks {
 		assert.Positive(t, res.hookCalls, "hook invocations")
+		assert.Zero(t, res.hookBad, "hook timeouts, failures or execution errors")
 	} else {
 		assert.Zero(t, res.hookCalls, "hooks must not run with hooks disabled")
 	}
@@ -195,6 +206,36 @@ func withPartner(t *testing.T, body []byte, partner string) []byte {
 	return out
 }
 
+var droppedRe = regexp.MustCompile(`\((\d+) dropped so far\)`)
+
+// droppedPackets reads the module's drop counter from the PBS log; the warning is rate-limited, so
+// the last occurrence carries the total.
+func droppedPackets(log []byte) int {
+	n := 0
+	for _, m := range droppedRe.FindAllSubmatch(log, -1) {
+		if v, err := strconv.Atoi(string(m[1])); err == nil && v > n {
+			n = v
+		}
+	}
+	return n
+}
+
+// withoutDebug removes ext.prebid.debug and ext.prebid.trace from the request.
+func withoutDebug(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var req map[string]any
+	require.NoError(t, json.Unmarshal(body, &req))
+	if ext, ok := req["ext"].(map[string]any); ok {
+		if prebid, ok := ext["prebid"].(map[string]any); ok {
+			delete(prebid, "debug")
+			delete(prebid, "trace")
+		}
+	}
+	out, err := json.Marshal(req)
+	require.NoError(t, err)
+	return out
+}
+
 // withPadding grows the request by n bytes of opaque site.ext data, which PBS keeps and forwards.
 func withPadding(t *testing.T, body []byte, n int) []byte {
 	t.Helper()
@@ -209,13 +250,17 @@ func withPadding(t *testing.T, body []byte, n int) []byte {
 
 func comparison(results []benchResult) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "| scenario | requests | p50 | p95 | p99 | max | hook calls | hook mean | traces | dropped | GC cycles | heap in use | memory |\n")
+	fmt.Fprintf(&b, "| scenario | requests | bytes/resp | p50 | p95 | p99 | max | hook calls | hook mean | traces | dropped | GC cycles | memory |\n")
 	fmt.Fprintf(&b, "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, r := range results {
 		l := r.report.Latency
-		fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %s | %.0f | %s | %d | %d | %.0f | %s | %s |\n",
-			r.scenario, r.report.Requests, ms(l.P50), ms(l.P95), ms(l.P99), ms(l.Max),
-			r.hookCalls, r.hookMean.Round(time.Microsecond), r.traceLines, r.dropped, r.gcCycles, mib(int64(r.heapInuse)), mib(r.rssBytes))
+		perResp := int64(0)
+		if r.report.Requests > 0 {
+			perResp = r.report.BytesIn / int64(r.report.Requests)
+		}
+		fmt.Fprintf(&b, "| %s | %d | %d | %s | %s | %s | %s | %.0f | %s | %d | %d | %.0f | %s |\n",
+			r.scenario, r.report.Requests, perResp, ms(l.P50), ms(l.P95), ms(l.P99), ms(l.Max),
+			r.hookCalls, r.hookMean.Round(time.Microsecond), r.traceLines, r.dropped, r.gcCycles, mib(r.rssBytes))
 	}
 	return b.String()
 }

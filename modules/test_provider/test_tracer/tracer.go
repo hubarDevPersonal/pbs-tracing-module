@@ -15,24 +15,33 @@ const (
 	StopReasonAmount   StopReason = "amount_reached"
 )
 
+// slotLease bounds how long a reserved packet slot may stay unconfirmed. A slot is reserved when a
+// trace starts and confirmed when its packet is written at exitpoint. PBS runs no hook when it fails
+// an auction with 4xx/5xx after the trigger, so such a trace never confirms; once its lease is over
+// the slot is given back, and the partner's amount counts collected packets again (FR-10, D13).
+// The lease is longer than any auction PBS would let run.
+const slotLease = 5 * time.Minute
+
 // Tracer owns the process-wide, per-partner tracing state and applies the trigger and stop
 // conditions (FR-03, FR-09..FR-11). It is safe for concurrent use.
 type Tracer struct {
 	mu       sync.Mutex
 	rules    map[string]Rule
 	partners map[string]*partnerState
-	stopped  int // partners in a terminal state; when it equals len(rules) nothing can be traced any more
 	now      func() time.Time
 
-	// exhausted is set once every partner is stopped. It is read lock-free on the entrypoint of every
-	// request so that the body copy, the module's main cost on untraced traffic, can be skipped.
-	exhausted atomic.Bool
+	// Both fields answer Exhausted without the lock, on the entrypoint of every request, so the
+	// body copy, the module's main cost on untraced traffic, can be skipped once nothing can be
+	// traced any more.
+	exhausted atomic.Bool  // every partner is stopped for good and no slot can be given back
+	deadline  atomic.Int64 // unix nanos after which every partner's window is closed; 0 = unknown
 }
 
 type partnerState struct {
 	firstTracedAt time.Time
-	packets       int
-	stopReason    StopReason
+	packets       int             // slots taken: written packets plus unconfirmed reservations
+	stopReason    StopReason      // StopReasonAmount is revoked when a lease expires
+	pending       []*AuctionTrace // reserved and not yet confirmed
 }
 
 // PartnerStatus is a read-only view of a partner's state for tests and diagnostics.
@@ -62,30 +71,29 @@ func newTracer(rules []Rule, now func() time.Time) (*Tracer, error) {
 	return t, nil
 }
 
-// Exhausted reports whether every partner is stopped, i.e. no future request can be traced.
-func (t *Tracer) Exhausted() bool { return t.exhausted.Load() }
-
-// stop moves a partner to a terminal state and flips exhausted when it was the last active one.
-// Caller holds t.mu.
-func (t *Tracer) stop(st *partnerState, reason StopReason) {
-	st.stopReason = reason
-	t.stopped++
-	if t.stopped == len(t.rules) {
-		t.exhausted.Store(true)
+// Exhausted reports whether no request can be traced any more: every partner is stopped for good,
+// or every partner's window has closed by now.
+func (t *Tracer) Exhausted(now time.Time) bool {
+	if t.exhausted.Load() {
+		return true
 	}
+	d := t.deadline.Load()
+	return d != 0 && now.UnixNano() > d
 }
 
 // Begin decides whether a new auction for partnerID must be traced. On success it reserves a
-// packet slot (D11) and returns the per-request collector. ok == false means "do not trace".
+// packet slot (D11) and returns the per-request collector; the caller confirms the slot with
+// Complete once the packet is written. ok == false means "do not trace".
 //
 // incomingAt is the timestamp of the incoming BidRequest (its entrypoint time). The partner's
-// window opens at the incomingAt of the first auction that reserves a slot (FR-09), and the
-// duration check compares the current time against it. A zero incomingAt means the entrypoint
-// capture is unavailable and the current time is used instead.
+// window opens at the incomingAt of the first auction that reserves a slot, and a later auction is
+// refused when its own incomingAt is more than Duration after that (FR-09): the window is measured
+// between request arrivals, as the trace reports them. A zero incomingAt means the entrypoint
+// capture is unavailable and the current time stands in.
 //
-// The check-and-reserve sequence runs under one lock so that concurrent requests can never start
-// more than TracePacketsAmount traces (FR-10 AC2). Concurrent first auctions of a partner open
-// the window in lock order, so it starts at the incoming timestamp of whichever reserves first.
+// The check-and-reserve sequence runs under one lock so that concurrent requests can never hold
+// more than TracePacketsAmount slots (FR-10 AC2). Concurrent first auctions of a partner open the
+// window in lock order, so it starts at the incoming timestamp of whichever reserves first.
 func (t *Tracer) Begin(partnerID, auctionID string, incomingAt time.Time) (*AuctionTrace, bool) {
 	rule, ok := t.rules[partnerID]
 	if !ok {
@@ -104,25 +112,24 @@ func (t *Tracer) Begin(partnerID, auctionID string, incomingAt time.Time) (*Auct
 		st = &partnerState{}
 		t.partners[partnerID] = st
 	}
-	if st.stopReason != StopReasonNone {
+	if st.stopReason == StopReasonDuration {
 		return nil, false
 	}
 	if st.packets == 0 {
 		st.firstTracedAt = incomingAt
-	} else if now.Sub(st.firstTracedAt) > rule.Duration { // FR-09: strictly "exceeds"
+	} else if incomingAt.Sub(st.firstTracedAt) > rule.Duration { // FR-09: strictly "exceeds"
 		t.stop(st, StopReasonDuration)
 		return nil, false
 	}
-	if st.packets >= rule.TracePacketsAmount { // defensive; unreachable because of the mark below
-		t.stop(st, StopReasonAmount)
-		return nil, false
+	if st.packets >= rule.TracePacketsAmount {
+		t.reclaim(st, rule, now)
+		if st.packets >= rule.TracePacketsAmount {
+			t.stop(st, StopReasonAmount)
+			return nil, false
+		}
 	}
 	st.packets++
-	if st.packets >= rule.TracePacketsAmount { // FR-10: the last slot has been taken
-		t.stop(st, StopReasonAmount)
-	}
-
-	return &AuctionTrace{
+	trace := &AuctionTrace{
 		partnerID:       partnerID,
 		rule:            rule,
 		packetIndex:     st.packets,
@@ -130,7 +137,84 @@ func (t *Tracer) Begin(partnerID, auctionID string, incomingAt time.Time) (*Auct
 		startedAt:       now.UTC(),
 		bidderRequests:  make([]BidderRequestPacket, 0, 4),
 		bidderResponses: make([]BidderResponsePacket, 0, 4),
-	}, true
+	}
+	st.pending = append(st.pending, trace)
+	if st.packets >= rule.TracePacketsAmount { // FR-10: the last slot has been taken
+		t.stop(st, StopReasonAmount)
+	}
+	t.refresh()
+	return trace, true
+}
+
+// Complete confirms the slot of a trace whose packet has been written (or attempted).
+func (t *Tracer) Complete(trace *AuctionTrace) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st := t.partners[trace.partnerID]
+	if st == nil {
+		return
+	}
+	st.pending = remove(st.pending, trace)
+	t.refresh()
+}
+
+// reclaim gives back the slots of pending traces whose lease is over and that never wrote a
+// packet. Caller holds t.mu.
+func (t *Tracer) reclaim(st *partnerState, rule Rule, now time.Time) {
+	kept := st.pending[:0]
+	for _, tr := range st.pending {
+		if now.Sub(tr.startedAt) > slotLease && !tr.isEmitted() {
+			st.packets--
+			continue
+		}
+		kept = append(kept, tr)
+	}
+	st.pending = kept
+	if st.stopReason == StopReasonAmount && st.packets < rule.TracePacketsAmount {
+		st.stopReason = StopReasonNone
+	}
+}
+
+// stop moves a partner to a stopped state. Caller holds t.mu.
+func (t *Tracer) stop(st *partnerState, reason StopReason) {
+	st.stopReason = reason
+	t.refresh()
+}
+
+// refresh recomputes the lock-free answers of Exhausted. Caller holds t.mu.
+//
+// exhausted: every partner is stopped and none of the amount-stopped ones has a reservation that a
+// lease could give back. deadline: once every partner has started, the latest window end among the
+// partners that are not stopped by duration; after it no reservation can be made or given back.
+func (t *Tracer) refresh() {
+	if len(t.partners) < len(t.rules) {
+		t.deadline.Store(0)
+		t.exhausted.Store(false)
+		return
+	}
+	var deadline time.Time
+	exhausted := true
+	for id, st := range t.partners {
+		switch st.stopReason {
+		case StopReasonDuration:
+			continue
+		case StopReasonAmount:
+			if len(st.pending) > 0 {
+				exhausted = false
+			}
+		default:
+			exhausted = false
+		}
+		if end := st.firstTracedAt.Add(t.rules[id].Duration); end.After(deadline) {
+			deadline = end
+		}
+	}
+	t.exhausted.Store(exhausted)
+	if deadline.IsZero() {
+		t.deadline.Store(0)
+	} else {
+		t.deadline.Store(deadline.UnixNano())
+	}
 }
 
 // Status returns the partner state; found == false when the partner has never matched a rule.
@@ -142,4 +226,13 @@ func (t *Tracer) Status(partnerID string) (status PartnerStatus, found bool) {
 		return PartnerStatus{}, false
 	}
 	return PartnerStatus{Packets: st.packets, FirstTracedAt: st.firstTracedAt, StopReason: st.stopReason}, true
+}
+
+func remove(traces []*AuctionTrace, trace *AuctionTrace) []*AuctionTrace {
+	for i, tr := range traces {
+		if tr == trace {
+			return append(traces[:i], traces[i+1:]...)
+		}
+	}
+	return traces
 }
