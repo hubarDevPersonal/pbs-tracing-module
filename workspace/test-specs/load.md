@@ -6,7 +6,8 @@ scenarios check both.
 
 L-01 to L-03 run in process on every test run. L-04 needs a running Prebid Server and live bidders. L-05 to L-09 form the
 bench: Prebid Server from the image built with bench rules (three partners whose limits outlast the run), stub bidders on the
-host answering every call with a bid after a fixed delay, one fresh server per scenario. L-04 and the bench run on demand.
+host answering every call with a bid after a fixed delay, one fresh server per scenario. L-10 to L-12 form the high-load run on
+the same stand. L-04, the bench and the high-load run are on demand.
 
 **L-01 Per-auction cost is measured** — NFR-01
 - Given the module with four bidders
@@ -68,5 +69,31 @@ so latency is compared between scenarios, not asserted against a target.
 - Then every auction is still answered without error at the target rate, latency is comparable to L-06, and the PBS log reports
   dropped packets
 
-Capacity of PBS itself (rate at which it saturates) is not a bench scenario: it depends on the host, and the assessment sets no
-target. The bench compares configurations at one moderate rate that every scenario sustains.
+The bench compares configurations at one moderate rate that every scenario sustains. Behaviour up to and at saturation is the
+high-load run below.
+
+## High-load run (stub bidders)
+
+Three configurations, hooks off, hooks on with nothing traced, and active tracing on every auction, each on its own server, go
+through the same steps. Every cell is run several times (default 3) and reported as medians with the spread of p99. Prebid
+Server's CPU time is read from its cgroup, so the cost per auction is measured, not inferred from latency. An open-loop step is
+*sustained* when the achieved rate is at least 95 % of the target with no errors and no arrival dropped by the generator. The
+assessment sets no numeric target, so the report compares configurations; nothing asserts a latency.
+
+**L-10 Rate ladder to saturation** — NFR-01, FR-15 AC1
+- Given arrival rates that grow step by step (default 200, 400, 800, 1600 auctions/s) and enough generator concurrency
+- When each configuration is held at each rate
+- Then for every sustained step: no non-2xx status, no hook timeout, failure or execution error, and with active tracing every
+  auction is either on stdout or counted as dropped by the module; the first step that is not sustained is the configuration's
+  saturation point, reported with its latency, errors and CPU
+
+**L-11 Closed loop at fixed concurrency** — NFR-01
+- Given a fixed number of requests kept in flight (default 128) and no arrival rate
+- When each configuration runs the closed loop
+- Then the achieved rate is that configuration's throughput ceiling on the host; it is reported next to CPU cores used and p99,
+  and a CPU profile of the run shows where the time goes and what share of it passes through the module
+
+**L-12 CPU per auction** — NFR-01
+- Given the cgroup CPU time of Prebid Server before and after every run
+- Then the report states CPU per auction and CPU cores used for every cell, and the difference of each configuration against
+  hooks off at every step: that difference is the module's cost, hook execution included, in CPU and in p99

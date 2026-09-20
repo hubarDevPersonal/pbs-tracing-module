@@ -42,6 +42,7 @@ server against live bidders (decision of the assignment owner).
 | End to end | `make e2e` (build tag `e2e`) | before merging module changes; needs Docker and outbound internet |
 | Load against PBS | `make load` or `make perf` (build tag `load`) | before merging changes to the hook path or the PBS configuration |
 | Bench matrix | `make load-bench` (build tag `load`, image built with `loadbench`) | before merging changes to the hook path; numbers compared with the previous run |
+| High-load run | `make highload` (same stand; rate ladder, closed loop, CPU per auction, report) | before a release; the checked-in report is refreshed when the hook path changes |
 
 The `e2e` and `load` suites sit behind build tags because they need Docker, network and minutes of wall time. The helpers they use
 (trace verification, the load driver) have unit tests in the default suite.

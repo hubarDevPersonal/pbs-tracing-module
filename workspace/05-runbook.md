@@ -124,6 +124,22 @@ make load-bench BENCH_ARGS="-args -bench-rps 300 -bench-duration 60s -bench-conc
 Needs Docker and a free port 18081 on the host. The container reaches the stub as `host.docker.internal` (added with
 `--add-host` on Linux). Nothing leaves the machine.
 
+### High-load run
+
+`make highload` runs the same stand through a ladder of arrival rates up to saturation and a closed loop at fixed concurrency,
+for hooks off, hooks on with nothing traced, and active tracing on every auction, three runs per cell, and writes
+`workspace/reports/highload.md` with medians, spreads, CPU per auction from the container's cgroup, hook metrics and CPU profiles
+(scenarios L-10 to L-12 in [test-specs/load.md](test-specs/load.md)). It takes about fifteen minutes.
+
+```bash
+make highload
+make highload HL_ARGS="-hl-rates 500,1000,2000,4000 -hl-closed 256 -hl-duration 30s -hl-repeats 5"
+```
+
+The numbers depend on the host: the generator and the stub bidder run on the host, Prebid Server in the Docker VM. Compare
+configurations within one run, not runs across machines. The report checked into `workspace/reports/` is the run described in
+[06-highload-report.md](06-highload-report.md).
+
 `make perf` runs the same suite against the `perf` profile of `docker-compose.yml`: [deploy/pbs.perf.yaml](../deploy/pbs.perf.yaml)
 (HTTP client pools and dial timeouts, clamped auction timeouts, simulated bidder throttling, Prometheus on `:9100`) and a caching
 CoreDNS sidecar ([deploy/coredns/Corefile](../deploy/coredns/Corefile), metrics on `:9153`). While the load runs it captures a CPU

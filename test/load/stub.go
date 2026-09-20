@@ -25,7 +25,7 @@ type stubBidder struct {
 	latency time.Duration
 }
 
-func startStubBidder(t *testing.T, addr string, latency time.Duration) *stubBidder {
+func startStubBidder(t *testing.T, addr string, latency time.Duration) {
 	t.Helper()
 	s := &stubBidder{latency: latency}
 	s.server = &http.Server{Addr: addr, Handler: http.HandlerFunc(s.handle), ReadHeaderTimeout: 5 * time.Second}
@@ -33,7 +33,6 @@ func startStubBidder(t *testing.T, addr string, latency time.Duration) *stubBidd
 	require.NoError(t, err, "stub bidder listen")
 	go func() { _ = s.server.Serve(ln) }()
 	t.Cleanup(func() { _ = s.server.Close() })
-	return s
 }
 
 func (s *stubBidder) handle(w http.ResponseWriter, r *http.Request) {
