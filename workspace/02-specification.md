@@ -89,9 +89,9 @@ at `exitpoint`. A new trace is refused while every slot is reserved or confirmed
 - AC1: With `TracePacketsAmount = 2`, the 1st and 2nd matching requests are traced, the 3rd is not.
 - AC2: Under concurrent requests the number of slots held never exceeds `TracePacketsAmount` (reservation at start, under one lock).
 - AC3: The partner is marked stopped with reason `amount_reached` while all slots are held.
-- AC4: A reservation that is not confirmed within 5 minutes (PBS failed the auction after the trigger, so `exitpoint` never ran)
-  is given back: the next matching request takes the slot and the partner is no longer stopped for amount. A confirmed slot is never
-  given back. The amount therefore counts collected packets, and an auction that PBS would still be running after 5 minutes is the
+- AC4: A reservation that is not confirmed within 5 minutes — PBS failed the auction after the trigger, or the `entrypoint` hook
+  timed out and the module lost its context, so `exitpoint` never wrote the packet — is given back: the next matching request
+  takes the slot and the partner is no longer stopped for amount. A confirmed slot is never given back. The amount therefore counts collected packets, and an auction that PBS would still be running after 5 minutes is the
   only way to exceed it, by one.
 
 ### FR-11 Whichever occurs first; no re-arm
@@ -102,7 +102,8 @@ at `exitpoint`. A new trace is refused while every slot is reserved or confirmed
 ### FR-12 In-flight traces complete
 - AC1: A trace started before a stop condition is fully collected and printed at its `exitpoint`.
 - If PBS fails the auction with 4xx/5xx after the trace started, `exitpoint` is not invoked, nothing is printed, and the slot is
-  given back after the lease of FR-10 AC4 (analysis §5.6).
+  given back after the lease of FR-10 AC4 (analysis §5.6). The same holds when the `entrypoint` hook timed out: the executor
+  then keeps a nil module context for the whole request, so the trace never reaches `exitpoint` (analysis §3.3).
 
 ### FR-13 Zero side effects for non-traced requests
 - AC1: No output, no mutation, no error for requests with no matching rule or a stopped partner.
@@ -197,9 +198,18 @@ are objects; `final_response` is `null` only in the degenerate case where neithe
   controls scrub only the `processed_auction_request` and `bidder_request` payloads, so user ids, IPs and geo in the raw request
   and in the response reach stdout. Deploy with stdout going to a store with the same access rules as the request logs.
 - Tracing of `all_processed_bid_responses` content (stage is implemented as a pass-through only).
-- The bytes exchanged with bidders over HTTP. PBS module hooks expose the per-bidder OpenRTB request before the adapter builds its
-  HTTP calls and the adapter's parsed result after it read the HTTP response; the HTTP bodies themselves are only available inside
-  the exchange, outside any hook. Capturing them needs a change to PBS core, not a module. Items 2 and 3 are therefore the objects
-  the hooks expose (FR-05, FR-06), and the JSON contract names them `request` and `response` of the bidder stage, not wire data.
+- The bytes exchanged with bidders over HTTP, as items 2 and 3. PBS module hooks expose the per-bidder OpenRTB request before the
+  adapter builds its HTTP calls and the adapter's parsed result after it read the HTTP response; the HTTP bodies themselves live
+  inside the exchange, outside any hook. Capturing them *there* needs a change to PBS core, not a module. Items 2 and 3 are
+  therefore the objects the hooks expose (FR-05, FR-06), and the JSON contract names them `request` and `response` of the bidder
+  stage, not wire data.
+
+  They do reach the packet by another route, and the provided configuration takes it: when a request carries
+  `ext.prebid.debug: true` and the account allows debug — both true for the assessment's sample and `pbs.yaml` — PBS puts the
+  wire-level exchange into the response it sends, under `ext.debug.httpcalls`: per bidder the URI, the status and the request and
+  response bodies. Item 4 is that response verbatim (FR-07 AC3), so the packet carries the HTTP bodies inside `final_response`.
+  Verified on a live run of the image with the sample request: four `httpcalls` entries, each `status: 204` with a ~1.9 KB
+  request body. This is a debug path the caller switches on per request, not a guarantee, which is why the contract still does
+  not present it as items 2 and 3.
 - Guaranteed delivery of every packet. A non-blocking `exitpoint`, bounded memory and no loss with a stdout that never drains cannot
   all hold at once; the module keeps the first two (FR-08 AC1a).

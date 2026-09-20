@@ -92,9 +92,17 @@ server; a production rule set traces a few packets per partner, not 1300 per sec
 
 **Hook timeouts appear only at saturation.** With the 50 ms group timeout of the bench configuration there are none at any
 sustained open-loop step. At 1600/s with full tracing 604 invocations timed out, in the closed loop 76 (1 with nothing traced):
-under CPU starvation the executor's goroutine for a hook is not scheduled in time, whatever the hook does. A timed-out
-`bidder_request` or `raw_bidder_response` loses that entry of the packet; a timed-out `exitpoint` loses the packet. The
-Prometheus counter `modules_test_provider_test_tracer_timeouts` shows it happening.
+under CPU starvation the executor's goroutine for a hook is not scheduled in time, whatever the hook does. The Prometheus
+counter `modules_test_provider_test_tracer_timeouts` shows it happening.
+
+What a timeout costs depends on the stage, because PBS stops waiting but does not stop the hook (analysis §3.3): the goroutine
+runs to the end and its work still lands in the shared trace. A timed-out `bidder_request` or `raw_bidder_response` therefore
+loses its entry only when the packet is built before it finishes, and a timed-out `exitpoint` still enqueues its packet. The
+expensive stage is `entrypoint`: on a timeout the executor stores a nil module context for the module, and `moduleContexts.put`
+merges later contexts into that nil entry instead of replacing it, so every later stage of that request sees no context. The
+trace is then started at `processed_auction_request`, takes a slot and is never written; the slot comes back with its lease
+(FR-10 AC4). With the provided plan's 120 000 ms group timeout this is unreachable; it needs a configuration as tight as the
+bench's 50 ms and a saturated server.
 
 **Memory** grows by 130–150 MiB with full tracing at 800/s: the queue of up to 64 packets, the packets being built, and the
 buffers of the log path. It does not grow with the rate beyond that. GC cycles follow the auction rate and are the same with and

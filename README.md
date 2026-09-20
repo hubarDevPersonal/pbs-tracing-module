@@ -127,11 +127,14 @@ Where the implementation had to choose, or cannot do what a literal reading asks
 
 - **A packet is one auction**, not one collected event. `TracePacketsAmount` counts auctions (D1).
 - **Items 2 and 3 are hook payloads.** PBS hooks see the per-bidder request before the adapter's `MakeRequests` and the adapter's
-  result after `MakeBids`; the HTTP bodies never reach a module. Capturing them is a PBS-core change (D15).
+  result after `MakeBids`; the HTTP bodies never reach a module, so capturing them under those two items is a PBS-core change
+  (D15). They are in the packet anyway when the caller enables debug, as the sample request does: PBS puts the wire exchange into
+  the response under `ext.debug.httpcalls`, and item 4 is that response verbatim.
 - **A stdout that stops draining loses packets**, it never delays a response. The queue holds 64 packets; overflow is counted and
   logged; `Shutdown` drains on graceful stop (D14).
-- **A slot reserved by an auction PBS fails with 4xx/5xx after the trigger is given back after 5 minutes.** `exitpoint` does not
-  run on that path, so nothing is written and the loss is detected late; until then the slot counts (D13, FR-10 AC4).
+- **A slot whose packet never reaches `exitpoint` is given back after 5 minutes.** Two paths lead there: PBS fails the auction
+  with 4xx/5xx after the trigger, or the `entrypoint` hook times out and the executor keeps a nil module context for the rest of
+  the request. Nothing is written and the loss is detected late; until then the slot counts (D13, FR-10 AC4, analysis §3.3).
 - **The window is measured between request arrivals**, the timestamps the trace reports, and `elapsed == Duration` is still inside
   it (D3).
 - **Anyone who knows a `PartnerID` can trigger a trace** when `account_required` is `false`, as in the provided configuration: the

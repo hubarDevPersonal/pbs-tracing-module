@@ -47,6 +47,7 @@ returned HTTP 200 in ~0.37 s with an empty `seatbid`; `ext.debug.httpcalls` show
 (`appnexus` → `http://ib.adnxs.com/openrtb2`, status 204). The appnexus adapter returns `nil` from `MakeBids` on 204, and
 `exchange/bidder.go` invokes the `raw_bidder_response` stage only when `MakeBids` returns a non-nil response. Consequence:
 with live bidders the module would record stage 2 (outgoing requests) but not stage 3 (bidder responses).
+Re-checked on 2026-09-21 against the built image: same result, all four bidders 204 (`aceex`, `adyoulike`, `amx`, `appnexus`).
 
 Direct calls to `http://ib.adnxs.com/openrtb2` with the exact body PBS sent, and with variants (no IP/geo, no user, minimal
 request, other placement ids, `hb_source` 1/2, member + inv_code, `test: 0`) all returned 204 from this network (egress: Portugal).
@@ -169,7 +170,15 @@ module does in each hook.
   last changed with the v4 module-path bump (`615e5dfa`, 2026-03-05).
 - `ModuleInvocationContext` is rebuilt for every invocation. `Endpoint` is always set. `AccountID` and `AccountConfig` are set only after `SetAccount` (i.e. from `raw_auction_request` on). `ModuleContext` is the pointer the module returned in a previous stage of the **same request**, or `nil` on first use.
 - After each stage the executor stores `HookResult.ModuleContext` per module (`moduleContexts.put`); the first stored pointer is kept and later values are merged into it with `SetAll`. Storing a pointer to a per-request struct in the context therefore survives all stages, including concurrent per-bidder stages.
-- `hookstage.ModuleContext` is `sync.RWMutex`-guarded; `Get`/`Set` on a nil receiver are safe no-ops.
+- **A timed-out hook stores a nil module context, and the module has no context for the rest of that request.** The timeout
+  branch of `executeHook` answers with an empty `HookResult`, so `ModuleContext` is `nil`; `moduleContexts.put` writes that nil
+  under the module's key, and because the key then exists every later `put` merges into it (`existingCtx.SetAll(...)` on a nil
+  receiver) instead of replacing it. Measured against the real executor: with an `entrypoint` that answers in time a value set
+  at `processed_auction_request` is visible at `bidder_request`; with an `entrypoint` that overruns the group timeout it is not.
+  For this module a timed-out `entrypoint` therefore means the trace starts, takes a slot and is never written — the slot comes
+  back with its lease (FR-10 AC4). Timeouts at the later stages cost only what that stage would have recorded, and a timed-out
+  `exitpoint` still enqueues its packet, because the hook itself runs to the end.
+- `hookstage.ModuleContext` is `sync.RWMutex`-guarded; `Get`/`Set`/`GetAll`/`SetAll` on a nil receiver are safe no-ops.
 - A hook error is recorded as a failure outcome; the auction proceeds. `Reject == true` is honoured only on rejectable stages. Payload changes are applied only via `ChangeSet` mutations. A tracing module returns no mutations and never rejects.
 - Panics inside hooks are recovered and logged by the executor, but the recovered goroutine sends no result, so the executor waits the full group timeout before moving on: with the provided 120 000 ms a panicking hook would hold the request for two minutes. The module must be panic-free.
 - The exchange starts one goroutine per bidder (`exchange/exchange.go`); `bidder_request` and `raw_bidder_response` for different bidders run concurrently. A bidder that issues several HTTP calls yields several `raw_bidder_response` invocations.
@@ -215,7 +224,7 @@ Checked on 2026-09-16 against the two pages referenced by the assessment:
 | D12 | Endpoint scoping | rely on plan / check in module | **both** — module ignores `miCtx.Endpoint != "/openrtb2/auction"` | Defence in depth; costs one string compare. |
 | D13 | Traces whose `exitpoint` never runs (early 4xx/5xx) | print partial / drop and keep the slot / drop and give the slot back | **drop; the slot is given back once its 5-minute lease expires unconfirmed** | A partial packet has no final response by definition. There is no hook PBS invokes on the 500 path (`auction.go` returns before `sendAuctionResponse`), so the loss cannot be detected at once; a lease longer than any auction PBS lets run detects it late but surely, and the amount then counts collected packets as the task says. See §5 item 6. |
 | D14 | Output path | write in the hook / bounded queue + writer goroutine / unbounded queue | **bounded queue (64) drained by one goroutine; drop, count and log on overflow; drain on `Shutdown`** | `exitpoint` runs before the response is encoded, so a blocking write delays the client (§3.3). Unbounded queues turn a dead stdout into unbounded memory. Loss on overflow is the price of the other two; the rules bound how many packets exist. |
-| D15 | Items 2 and 3 | hook payloads / HTTP bodies | **hook payloads**: the per-bidder request before `MakeRequests`, the adapter result after `MakeBids` | `exchange/bidder.go` runs the hooks around the adapter, and the HTTP bodies never reach a hook. Capturing them is a PBS-core change, not a module. Documented in spec FR-05, FR-06 and §6. |
+| D15 | Items 2 and 3 | hook payloads / HTTP bodies | **hook payloads**: the per-bidder request before `MakeRequests`, the adapter result after `MakeBids` | `exchange/bidder.go` runs the hooks around the adapter, and the HTTP bodies never reach a hook; capturing them *as items 2 and 3* is a PBS-core change, not a module. They do reach the packet through item 4 when the request enables debug: PBS writes them into the response under `ext.debug.httpcalls` (spec §6). Documented in spec FR-05, FR-06 and §6. |
 
 ## 5. Risks and open questions for the reviewer
 
