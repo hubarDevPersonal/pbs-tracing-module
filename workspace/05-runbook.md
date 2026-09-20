@@ -14,7 +14,7 @@
 ```bash
 make docker-build                       # PBS @ pinned commit + module; module tests run inside the build
 docker run --rm -p 8080:8080 pbs-tracer:local 2>pbs.log | tee trace.ndjson
-sh docs/assessment/02-send-bid-request.sh    # in another terminal; repeat > TracePacketsAmount times
+sh workspace/assessment/02-send-bid-request.sh               # in another terminal; repeat > TracePacketsAmount times
 ```
 
 Each traced auction appears as one JSON line on the container's stdout. `make e2e` does all of this and verifies the result (§5).
@@ -46,7 +46,7 @@ For Docker see §1a; the image already contains `pbs.yaml`.
 ## 4. Send the sample request
 
 ```bash
-sh docs/assessment/02-send-bid-request.sh
+sh workspace/assessment/02-send-bid-request.sh
 ```
 
 Expected after the first request: one line in `trace.ndjson`, e.g. `python3 -c 'import json;[print(json.loads(l)["partner_id"], json.loads(l)["packet_index"], [b["bidder"] for b in json.loads(l)["bidder_requests"]]) for l in open("trace.ndjson")]'`
@@ -128,7 +128,7 @@ Needs Docker and a free port 18081 on the host. The container reaches the stub a
 
 `make highload` runs the same stand through a ladder of arrival rates up to saturation and a closed loop at fixed concurrency,
 for hooks off, hooks on with nothing traced, and active tracing on every auction, three runs per cell, and writes
-`docs/reports/highload.md` with medians, spreads, CPU per auction from the container's cgroup, hook metrics and CPU profiles
+`workspace/reports/highload.md` with medians, spreads, CPU per auction from the container's cgroup, hook metrics and CPU profiles
 (scenarios L-10 to L-12 in [test-specs/load.md](test-specs/load.md)). It takes about fifteen minutes.
 
 ```bash
@@ -137,7 +137,7 @@ make highload HL_ARGS="-hl-rates 500,1000,2000,4000 -hl-closed 256 -hl-duration 
 ```
 
 The numbers depend on the host: the generator and the stub bidder run on the host, Prebid Server in the Docker VM. Compare
-configurations within one run, not runs across machines. The report checked into `docs/reports/` is the run described in
+configurations within one run, not runs across machines. The report checked into `workspace/reports/` is the run described in
 [06-highload-report.md](06-highload-report.md).
 
 `make perf` runs the same suite against the `perf` profile of `docker-compose.yml`: [deploy/pbs.perf.yaml](../deploy/pbs.perf.yaml)

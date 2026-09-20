@@ -3,7 +3,7 @@
 Level: Prebid Server built at the pinned commit with the module compiled in, the provided `pbs.yaml` unchanged, run as a container;
 the test sends HTTP requests and reads the container's stdout (trace) and stderr (PBS log). Bidders are live.
 
-Requests: the **sample** request is `docs/assessment/01-bid-request-example.json` (account `664-025-677-881`, rule amount 3; its four bidders answer
+Requests: the **sample** request is `workspace/assessment/01-bid-request-example.json` (account `664-025-677-881`, rule amount 3; its four bidders answer
 204). The **live-bid** request is the sample plus onetag's test publisher (account `33415-10498`, rule amount 1; onetag returns a test bid).
 
 **E-01 The module is registered and all its hooks succeed** — FR-01 AC2, FR-15 AC1, AC2

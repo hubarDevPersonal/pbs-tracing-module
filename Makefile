@@ -49,10 +49,10 @@ load-bench:              ## bench matrix against stub bidders: hooks off/on, act
 	docker build --build-arg GO_TAGS=loadbench -t pbs-tracer:loadbench .
 	go test -tags load -count=1 -v -timeout 0 -run '^TestLoadBench$$' ./test/load $(BENCH_ARGS)
 
-highload:                ## rate ladder to saturation + closed loop, hooks off / on / active tracing, CPU per auction; report → docs/reports/highload.md
+highload:                ## rate ladder to saturation + closed loop, hooks off / on / active tracing, CPU per auction; report → workspace/reports/highload.md
 	docker build --build-arg GO_TAGS=loadbench -t pbs-tracer:loadbench .
-	mkdir -p docs/reports
-	go test -tags load -count=1 -v -timeout 0 -run '^TestHighload$$' ./test/load -args -hl-report $(CURDIR)/docs/reports/highload.md $(HL_ARGS)
+	mkdir -p workspace/reports
+	go test -tags load -count=1 -v -timeout 0 -run '^TestHighload$$' ./test/load -args -hl-report $(CURDIR)/workspace/reports/highload.md $(HL_ARGS)
 
 perf:                    ## load test on the perf profile (tuned config, DNS cache) with CPU profile and metrics
 	scripts/perf-docker.sh

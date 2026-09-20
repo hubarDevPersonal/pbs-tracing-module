@@ -2,7 +2,7 @@
 //
 // The module traces auctions on the /openrtb2/auction endpoint for partners that match a
 // hardcoded rule set and prints one JSON object per traced auction to stdout.
-// See docs/02-specification.md and docs/03-design.md in the assessment repository.
+// See workspace/02-specification.md and workspace/03-design.md in the assessment repository.
 //
 // The module never rejects requests and never mutates payloads; it only observes (FR-15).
 package testtracer

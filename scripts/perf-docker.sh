@@ -30,7 +30,7 @@ curl -sf -o /dev/null http://localhost:9100/metrics || fail "prometheus metrics 
 curl -sf -o /dev/null http://localhost:6060/debug/pprof/ || fail "pprof not exposed on :6060"
 
 log "2/6 warm-up (3 requests) and metric snapshots"
-for _ in 1 2 3; do bash "$ROOT/docs/assessment/02-send-bid-request.sh" -s >/dev/null 2>&1; done
+for _ in 1 2 3; do bash "$ROOT/workspace/assessment/02-send-bid-request.sh" -s >/dev/null 2>&1; done
 sleep 1
 curl -s http://localhost:9100/metrics >"$WORK/metrics-before.txt"
 curl -s http://localhost:9153/metrics >"$WORK/coredns-before.txt"

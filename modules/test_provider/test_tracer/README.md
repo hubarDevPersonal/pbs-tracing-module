@@ -12,7 +12,7 @@ For every traced auction:
 3. every `BidResponse` received from a bidder with timestamp and bidder name;
 4. the final auction response returned to the client with timestamp.
 
-Output is newline-delimited JSON; see `docs/02-specification.md` §5 in the assessment repository for the contract.
+Output is newline-delimited JSON; see `workspace/02-specification.md` §5 in the assessment repository for the contract.
 
 ## Trigger and stop rules
 

@@ -20,8 +20,8 @@ or the number of collected traces reaches `TracePacketsAmount`, whichever comes 
 
 | File | Role | Findings |
 |------|------|----------|
-| `docs/assessment/01-bid-request-example.json` | Sample OpenRTB 2.x request | `test: 1`, `ext.prebid.debug: true`, `ext.prebid.trace: "verbose"`. Four bidders in `imp[0].ext.prebid.bidder`: `aceex`, `appnexus`, `amx`, `adyoulike`. Publisher `id = "33415-10498"` and `ext.prebid.parentAccount = "664-025-677-881"`. |
-| `docs/assessment/02-send-bid-request.sh` | `curl` wrapper | Same payload inline. `POST http://localhost:8080/openrtb2/auction`. |
+| `workspace/assessment/01-bid-request-example.json` | Sample OpenRTB 2.x request | `test: 1`, `ext.prebid.debug: true`, `ext.prebid.trace: "verbose"`. Four bidders in `imp[0].ext.prebid.bidder`: `aceex`, `appnexus`, `amx`, `adyoulike`. Publisher `id = "33415-10498"` and `ext.prebid.parentAccount = "664-025-677-881"`. |
+| `workspace/assessment/02-send-bid-request.sh` | `curl` wrapper | Same payload inline. `POST http://localhost:8080/openrtb2/auction`. |
 | `pbs.yaml` | PBS configuration | Hooks enabled; module `test_provider.test_tracer` enabled; host execution plan for `/openrtb2/auction` lists 7 stages: `entrypoint`, `processed_auction_request`, `bidder_request`, `raw_bidder_response`, `all_processed_bid_responses`, `auction_response`, `exitpoint`. `raw_auction_request` is **not** in the plan. Group timeout 120 000 ms. `account_required: false`, `account_defaults.debug_allow: true`. Adapters `appnexus` and `colossus` allow debug. |
 
 ### 2.1 Which value is `Account.ID` for the sample request
