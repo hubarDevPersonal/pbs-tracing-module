@@ -227,10 +227,11 @@ func TestAuctionResponse_RecordsFinalResponse(t *testing.T) {
 
 	trace := traceIn(mc)
 	require.NotNil(t, trace)
-	p := trace.Packet(clock.Now())
-	require.NotNil(t, p.FinalResponse)
-	assert.True(t, p.FinalResponse.Timestamp.Equal(testStart.Add(3*time.Second)))
-	assert.Contains(t, string(p.FinalResponse.Body), `"final-1"`)
+	resp, at := trace.AuctionResponse()
+	require.NotNil(t, resp)
+	assert.Equal(t, "final-1", resp.ID)
+	assert.True(t, at.Equal(testStart.Add(3*time.Second)))
+	assert.Nil(t, trace.Packet(clock.Now()).FinalResponse, "marshaled at exitpoint, not before")
 }
 
 // M-16. FR-08 AC1 / FR-05 / FR-06 / FR-07 end-to-end through the hooks
@@ -316,6 +317,7 @@ func TestExitpoint_FallsBackToAuctionResponseWhenPayloadIsNotBidResponse(t *test
 	require.Len(t, packets, 1)
 	require.NotNil(t, packets[0].FinalResponse)
 	assert.Contains(t, string(packets[0].FinalResponse.Body), `"from-auction-response"`)
+	assert.True(t, packets[0].FinalResponse.Timestamp.Equal(testStart), "the auction_response capture keeps its own timestamp")
 }
 
 // M-06, M-18. FR-08 AC4 / FR-13
@@ -453,9 +455,10 @@ func TestEntrypoint_SkipsBodyCopyWhenAllPartnersAreStopped(t *testing.T) {
 	m, _ := newTestModule(t, []Rule{{PartnerID: "p", Duration: time.Hour, TracePacketsAmount: 1}}, newFakeClock(testStart))
 	body := loadSampleRequest(t)
 
-	_, ok := m.tracer.Begin("p", "a", time.Time{})
+	trace, ok := m.tracer.Begin("p", "a", time.Time{})
 	require.True(t, ok)
-	require.True(t, m.tracer.Exhausted())
+	m.tracer.Complete(trace)
+	require.True(t, m.tracer.Exhausted(testStart))
 
 	res, err := m.HandleEntrypointHook(context.Background(), auctionCtx("", nil), entrypointPayload(body))
 	require.NoError(t, err)

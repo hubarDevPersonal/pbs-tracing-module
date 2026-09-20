@@ -93,7 +93,7 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 - Given the production output path with a queue of N packets and a stdout that does not drain
 - When more than N packets are emitted
 - Then every emit returns at once; the packets beyond the queue are dropped and counted; once stdout drains again the queued
-  packets are written in order; shutdown waits for the queue to empty and later emits are refused
+  packets are written in order; shutdown waits for the queue to empty, at most 5 s, and later emits are refused
 
 **M-17 A packet is written once** — FR-08 AC3
 - Given a traced auction whose packet was written
@@ -110,10 +110,10 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 
 ## Stop conditions
 
-**M-20 Time limit, boundary included, window from the incoming timestamp** — FR-09 AC1, AC2
+**M-20 Time limit, boundary included, window between arrivals** — FR-09 AC1, AC2
 - Given a rule with duration D and a first traced auction whose incoming request arrived at T and was triggered later
-- Then the window opens at T, not at the trigger time; an auction triggered at T + D is traced, one at T + D + 1 ns is not, and
-  the partner is stopped for duration
+- Then the window opens at T, not at the trigger time; an auction that arrived at T + D is traced even if triggered later, one that
+  arrived at T + D + 1 ns is not, and the partner is stopped for duration
 
 **M-21 Amount limit** — FR-10 AC1, AC3
 - Given a rule with amount 2
@@ -128,7 +128,8 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 **M-23 Whichever limit comes first; no re-arm; partners independent** — FR-11 AC1, AC2
 - Given two partners
 - When one reaches either limit
-- Then it is never traced again, whatever the clock does, and the other partner is unaffected
+- Then it is never traced again, whatever the clock does (except through M-36 while its window is open), and the other partner is
+  unaffected
 
 **M-24 Traces in flight complete** — FR-12 AC1
 - Given a trace started before its partner stopped
@@ -139,6 +140,11 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 - Given PBS's hook executor with the provided plan and a partner whose amount is used up
 - When another auction runs for it
 - Then nothing is written and every hook outcome is a success
+
+**M-36 A slot of an auction that never completed is given back after its lease** — FR-10 AC4, FR-12
+- Given a partner with amount 1 whose only trace started but never reached `exitpoint`
+- When a matching request arrives within 5 minutes, then another after 5 minutes
+- Then the first is refused and the second is traced with packet index 1; a trace whose packet was written keeps its slot for good
 
 ## Scope and safety
 
@@ -157,7 +163,7 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 
 **M-29 Missing or unexpected inputs are safe** — FR-15 AC3
 - Given a missing module context, missing payload fields, or payload types other than expected
-- Then no hook panics and no hook fails
+- Then no hook panics and no hook fails; a panic raised inside a hook is recovered, logged and turned into a successful empty result
 
 ## Memory on untraced traffic
 
@@ -167,9 +173,14 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 - Then the copy taken at `entrypoint` is no longer held by the request's module context
 
 **M-34 No body is copied once every partner is stopped** — NFR-01
-- Given every partner stopped by amount or duration, or an empty rule set
+- Given every partner stopped by amount with every slot confirmed, or by duration, or an empty rule set
 - When `entrypoint` runs for any request
 - Then no context is created and the body is not copied
+
+**M-37 No body is copied once every window has closed** — NFR-01
+- Given every partner has started and the latest window end among them has passed
+- When `entrypoint` runs for any request
+- Then no body is copied, even though no partner has been refused yet
 
 ## Concurrency
 

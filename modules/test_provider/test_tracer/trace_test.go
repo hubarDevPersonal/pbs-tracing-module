@@ -1,6 +1,7 @@
 package testtracer
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
@@ -167,7 +168,7 @@ func TestAuctionTrace_SnapshotsAreImmutable(t *testing.T) {
 	require.True(t, ok)
 
 	body := []byte(`{"id":"before"}`)
-	trace.SetIncomingRequest(testStart, body)
+	trace.SetIncomingRequest(testStart, bytes.Clone(body)) // the trace owns what it is given; entrypoint hands it a copy (M-08)
 	copy(body, `{"id":"AFTER!"}`)
 
 	req := &openrtb2.BidRequest{ID: "before"}
