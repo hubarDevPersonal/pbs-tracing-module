@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -236,3 +238,73 @@ func tail(b []byte, lines int) string {
 }
 
 func mib(b int64) string { return fmt.Sprintf("%.0f MiB", float64(b)/(1<<20)) }
+
+// cpuUsage returns the CPU time the container has consumed so far (cgroup v2 cpu.stat). The bench's
+// generator and stub bidder run on the host, so this is Prebid Server's CPU alone.
+func cpuUsage(t *testing.T) time.Duration {
+	t.Helper()
+	out := docker(t, func(ctx context.Context) *exec.Cmd {
+		return exec.CommandContext(ctx, "docker", "exec", container, "cat", "/sys/fs/cgroup/cpu.stat")
+	})
+	for _, line := range strings.Split(out, "\n") {
+		if name, value, ok := strings.Cut(line, " "); ok && name == "usage_usec" {
+			usec, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+			require.NoError(t, err, "cpu.stat: %q", line)
+			return time.Duration(usec) * time.Microsecond
+		}
+	}
+	t.Fatalf("usage_usec not found in cpu.stat:\n%s", out)
+	return 0
+}
+
+// dockerCPUs returns the number of CPUs available to containers.
+func dockerCPUs(t *testing.T) int {
+	t.Helper()
+	out := strings.TrimSpace(docker(t, func(ctx context.Context) *exec.Cmd {
+		return exec.CommandContext(ctx, "docker", "info", "--format", "{{.NCPU}}")
+	}))
+	n, err := strconv.Atoi(out)
+	require.NoError(t, err, "docker info NCPU: %q", out)
+	return n
+}
+
+// cpuProfile captures a CPU profile of the server for the given number of seconds and returns the
+// path of the saved profile. It blocks for that long, so call it from a goroutine next to the load.
+func (p *pbsContainer) cpuProfile(t *testing.T, dir string, seconds int) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(seconds+30)*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/debug/pprof/profile?seconds=%d", p.AdminURL, seconds), http.NoBody)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "pprof profile")
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	path := filepath.Join(dir, fmt.Sprintf("cpu-%d.pprof", time.Now().UnixNano()))
+	require.NoError(t, os.WriteFile(path, raw, 0o600))
+	return path
+}
+
+// pprofTop renders the top frames of a profile and the share of samples on paths through the module.
+func pprofTop(t *testing.T, profile string, nodes int) (top, moduleShare string) {
+	t.Helper()
+	run := func(args ...string) string {
+		ctx, cancel := context.WithTimeout(context.Background(), dockerTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "go", "tool", "pprof")
+		cmd.Args = append(cmd.Args, args...)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "go tool pprof: %s", out)
+		return string(out)
+	}
+	top = run("-top", "-nodecount="+strconv.Itoa(nodes), profile)
+	focus := run("-top", "-nodecount=1", "-focus=test_tracer", profile) // symbols carry the directory name, not the package name
+	for _, line := range strings.Split(focus, "\n") {
+		if strings.HasPrefix(line, "Showing nodes accounting for") {
+			moduleShare = strings.TrimSpace(line)
+		}
+	}
+	return top, moduleShare
+}

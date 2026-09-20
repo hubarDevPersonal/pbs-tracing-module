@@ -11,6 +11,7 @@ This folder is the working space of the assessment: the task statement with the 
 | 04 | [04-test-plan.md](04-test-plan.md) | Test strategy: levels, environments, entry and exit criteria, how tests stay tied to requirements. |
 | — | [test-specs/](test-specs/) | Test specifications: Given / When / Then scenarios per level (module, end to end, load), derived from the requirements only. |
 | 05 | [05-runbook.md](05-runbook.md) | How to build, register, run, verify and load-test the module locally. Troubleshooting. |
+| 06 | [06-highload-report.md](06-highload-report.md) | What the module costs under load: rate ladder to saturation, closed-loop ceiling, CPU per auction, hook timeouts, stdout limits. Raw run output in [reports/](reports/). |
 
 Code:
 
