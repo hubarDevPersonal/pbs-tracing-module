@@ -10,15 +10,16 @@ import (
 	"time"
 )
 
-// MaxRPS bounds the target rate. Above it the schedule interval drops below one millisecond, which is
-// not a meaningful arrival rate for an HTTP auction.
-const MaxRPS = 1000.0
+// MaxRPS bounds the target rate; above it the interval between arrivals is under 20 µs, which no
+// generator on a shared host can keep.
+const MaxRPS = 50000.0
 
 // Config describes one load run. Every field is required; Validate reports the first invalid one.
 type Config struct {
 	URL              string        // auction endpoint
 	Bodies           [][]byte      // request bodies, sent round-robin
-	RPS              float64       // target arrival rate
+	RPS              float64       // target arrival rate; ignored when ClosedLoop is set
+	ClosedLoop       bool          // no arrival rate: every worker sends its next request as soon as the previous one is answered
 	Duration         time.Duration // length of the scheduling window
 	Concurrency      int           // maximum in-flight requests
 	Timeout          time.Duration // per-request timeout
@@ -32,7 +33,7 @@ func (c Config) Validate() error {
 		return errors.New("load: URL is required")
 	case len(c.Bodies) == 0:
 		return errors.New("load: at least one body is required")
-	case c.RPS <= 0 || c.RPS > MaxRPS || math.IsNaN(c.RPS):
+	case !c.ClosedLoop && (c.RPS <= 0 || c.RPS > MaxRPS || math.IsNaN(c.RPS)):
 		return fmt.Errorf("load: RPS must be in (0, %v], got %v", MaxRPS, c.RPS)
 	case c.Duration <= 0:
 		return fmt.Errorf("load: Duration must be positive, got %s", c.Duration)

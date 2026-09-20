@@ -108,8 +108,8 @@ hooks:
 # Outbound HTTP client used for bidder calls (router.go → http.Transport). Defaults in brackets.
 http_client:
   max_connections_per_host: 0           # [0] unlimited; cap only if a bidder must be protected
-  max_idle_connections: 1024            # [400]  pool across all bidders
-  max_idle_connections_per_host: 64     # [10]   keep-alive per bidder host: fewer new dials → fewer DNS lookups and TLS handshakes
+  max_idle_connections: 4096            # bench: the four bidders share one stub host, so the pool must hold every in-flight call
+  max_idle_connections_per_host: 1024   # bench: above this PBS dials a new connection per call through Docker's host gateway
   idle_connection_timeout_seconds: 90   # [60]   keep pooled connections through short traffic gaps
   tls_handshake_timeout_seconds: 5      # [10]
   expect_continue_timeout_seconds: 1    # [1]

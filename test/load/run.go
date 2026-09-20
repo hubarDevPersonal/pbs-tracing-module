@@ -24,12 +24,16 @@ type sample struct {
 	err     error
 }
 
-// Run sends cfg.Body to cfg.URL at cfg.RPS for cfg.Duration and returns the aggregated report.
+// Run sends cfg.Bodies to cfg.URL for cfg.Duration and returns the aggregated report.
 //
-// Arrivals are open-loop: a request is due on every schedule tick regardless of how long earlier ones
-// take, so a slow server shows up as latency and dropped ticks instead of silently lowering the rate
-// (a closed loop that waits for each response would hide exactly the latency under test).
-// A tick that finds all Concurrency workers busy is dropped and counted in Report.Dropped.
+// By default arrivals are open-loop: a request is due on every schedule tick regardless of how long
+// earlier ones take, so a slow server shows up as latency and dropped ticks instead of silently
+// lowering the rate (a closed loop that waits for each response would hide exactly the latency under
+// test). A tick that finds all Concurrency workers busy is dropped and counted in Report.Dropped.
+//
+// With cfg.ClosedLoop the schedule is the workers themselves: each sends again as soon as it is
+// answered, so Concurrency requests are always in flight and the achieved rate is the server's
+// throughput at that concurrency. Nothing is dropped in that mode.
 func Run(ctx context.Context, cfg Config, client *http.Client) (Report, error) {
 	if err := cfg.Validate(); err != nil {
 		return Report{}, err
@@ -68,21 +72,37 @@ func schedule(ctx context.Context, cfg Config, ticks chan<- struct{}) int {
 	defer close(ticks)
 	window, cancel := context.WithTimeout(ctx, cfg.Duration)
 	defer cancel()
-	ticker := time.NewTicker(cfg.interval())
-	defer ticker.Stop()
-
-	dropped := 0
-	for {
-		select {
-		case <-window.Done():
-			return dropped
-		case <-ticker.C:
+	if cfg.ClosedLoop {
+		for {
 			select {
+			case <-window.Done():
+				return 0
 			case ticks <- struct{}{}:
-			default:
-				dropped++
 			}
 		}
+	}
+	// Arrivals are due at start + n×interval. The scheduler sleeps until the next due time and, when
+	// it wakes up late (timer granularity on a shared host is around a millisecond), offers every
+	// arrival that is due by then, so the achieved rate tracks the target instead of the timer.
+	interval := cfg.interval()
+	next := time.Now().Add(interval) // the first arrival is one interval in: the workers are still starting
+	dropped := 0
+	for {
+		if wait := time.Until(next); wait > 0 {
+			select {
+			case <-window.Done():
+				return dropped
+			case <-time.After(wait):
+			}
+		} else if window.Err() != nil {
+			return dropped
+		}
+		select {
+		case ticks <- struct{}{}:
+		default:
+			dropped++
+		}
+		next = next.Add(interval)
 	}
 }
 

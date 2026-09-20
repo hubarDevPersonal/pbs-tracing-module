@@ -142,3 +142,42 @@ func TestRun_CancellationEndsTheRun(t *testing.T) {
 	assert.Less(t, time.Since(start), 2*time.Second, "the run ends with ctx, not with Duration")
 	assert.Positive(t, rep.Requests)
 }
+
+func TestRun_ClosedLoopKeepsConcurrencyRequestsInFlight(t *testing.T) {
+	var inFlight, peak atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := inFlight.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+		inFlight.Add(-1)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	cfg := validConfig(srv.URL)
+	cfg.ClosedLoop, cfg.RPS, cfg.Concurrency, cfg.Duration = true, 0, 4, 300*time.Millisecond
+	require.NoError(t, cfg.Validate())
+	rep, err := Run(context.Background(), cfg, srv.Client())
+	require.NoError(t, err)
+	assert.Zero(t, rep.Errors)
+	assert.Zero(t, rep.Dropped)
+	assert.EqualValues(t, 4, peak.Load(), "all workers stay busy")
+	assert.GreaterOrEqual(t, rep.Requests, 80, "4 workers × 300 ms / 10 ms ≈ 120 requests")
+}
+
+func TestRun_HoldsTheTargetRateAboveTimerGranularity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	defer srv.Close()
+
+	cfg := validConfig(srv.URL)
+	cfg.RPS, cfg.Duration, cfg.Concurrency = 2000, 500*time.Millisecond, 64
+	rep, err := Run(context.Background(), cfg, srv.Client())
+	require.NoError(t, err)
+	assert.Zero(t, rep.Dropped)
+	assert.InDelta(t, cfg.RPS, rep.AchievedRPS, 0.05*cfg.RPS, "achieved rate within 5 %% of the target")
+}
