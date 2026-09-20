@@ -6,7 +6,7 @@ MODULE  := ./modules/test_provider/test_tracer
 .PHONY: help test bench cover lint fmt vet tidy install-module docker-build docker-run e2e load load-bench perf profile clean
 
 help:                    ## list targets
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 test:                    ## module unit, race and in-process integration tests; unit tests of the e2e and load helpers
 	go test ./... -race -count=1

@@ -11,3 +11,4 @@ trace.ndjson
 .vscode/
 # local claude settings
 .claude/settings.local.json
+.claude/worktrees/

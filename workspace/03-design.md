@@ -47,15 +47,19 @@ func validateRules(rules []Rule) error            // FR-02
 // tracer.go
 type StopReason string                              // "", "duration_exceeded", "amount_reached"
 type Tracer struct {                                // module-global, one per Module
-    mu       sync.Mutex
-    rules    map[string]Rule                        // PartnerID → Rule
-    partners map[string]*partnerState               // PartnerID → state, created lazily
-    now      func() time.Time
+    mu        sync.Mutex
+    rules     map[string]Rule                       // PartnerID → Rule
+    partners  map[string]*partnerState              // PartnerID → state, created lazily
+    stopped   int                                   // partners in a terminal state
+    now       func() time.Time
+    exhausted atomic.Bool                           // every partner stopped; read lock-free at entrypoint
 }
 type partnerState struct { firstTracedAt time.Time; packets int; stopReason StopReason }
 type PartnerStatus struct { Packets int; FirstTracedAt time.Time; StopReason StopReason }   // read-only view for tests/ops
 func newTracer(rules []Rule, now func() time.Time) (*Tracer, error)
-func (t *Tracer) Begin(partnerID, auctionID string) (*AuctionTrace, bool)   // FR-03, FR-09..FR-11, D11
+func (t *Tracer) Begin(partnerID, auctionID string, incomingAt time.Time) (*AuctionTrace, bool)   // FR-03, FR-09..FR-11, D11
+func (t *Tracer) Complete(trace *AuctionTrace)                                 // FR-10 AC4: confirm the slot at exitpoint
+func (t *Tracer) Exhausted(now time.Time) bool                                 // NFR-01: skip the entrypoint copy
 func (t *Tracer) Status(partnerID string) (PartnerStatus, bool)
 
 type AuctionTrace struct {                          // per traced request, shared by concurrent bidder hooks
@@ -77,11 +81,15 @@ func (a *AuctionTrace) AddBidderResponse(at time.Time, bidder string, resp *adap
 func (a *AuctionTrace) SetFinalResponse(at time.Time, resp *openrtb2.BidResponse) error                // FR-07
 func (a *AuctionTrace) Packet(completedAt time.Time) TracePacket                                        // snapshot for output
 
-// output.go
+// packet.go
 type TracePacket struct { ... }                     // §5 of the specification, JSON tags snake_case
+
+// emitter.go
 type Emitter interface { Emit(TracePacket) error }
 type jsonEmitter struct { mu sync.Mutex; w io.Writer }
 func newJSONEmitter(w io.Writer) *jsonEmitter       // marshal → append '\n' → single Write under mutex (FR-08, FR-16)
+type asyncEmitter struct { next Emitter; queue chan TracePacket; ... }
+func newAsyncEmitter(next Emitter, queueSize int) *asyncEmitter   // non-blocking Emit, drop on full queue, Close drains (D14)
 
 // module.go
 const (
@@ -92,7 +100,8 @@ const (
 )
 type entrypointCapture struct { at time.Time; body []byte }
 type Module struct { tracer *Tracer; emitter Emitter; now func() time.Time }
-func Builder(_ json.RawMessage, _ moduledeps.ModuleDeps) (interface{}, error)   // newModule(defaultRules, newJSONEmitter(os.Stdout), time.Now)
+func Builder(_ json.RawMessage, _ moduledeps.ModuleDeps) (interface{}, error)   // newModule(defaultRules, newAsyncEmitter(newJSONEmitter(os.Stdout), 64), time.Now)
+func (m *Module) Shutdown() error                                               // modules.Shutdowner: drains the queue
 func newModule(rules []Rule, emitter Emitter, now func() time.Time) (*Module, error)
 ```
 
@@ -110,7 +119,7 @@ per-request value is created at `entrypoint` and every field of `AuctionTrace` i
 ## 3. Hook-by-hook behaviour
 
 All handlers: check `miCtx.Endpoint == auctionEndpoint` first (FR-14); on mismatch return an empty result with `ModuleContext: miCtx.ModuleContext`.
-All handlers return `Reject=false`, no mutations, `nil` error (FR-15). Internal errors → `logger.Warningf("[%s] ...", ModuleCode, ...)`.
+All handlers return `Reject=false`, no mutations, `nil` error (FR-15). Internal errors → `logger.Warnf("[%s] ...", ModuleCode, ...)`.
 
 | Stage | Behaviour |
 |-------|-----------|
@@ -119,8 +128,8 @@ All handlers return `Reject=false`, no mutations, `nil` error (FR-15). Internal 
 | `bidder_request` | `trace := traceFrom(mc)`; if nil return. `trace.AddBidderRequest(now(), payload.Bidder, payload.Request.BidRequest)`. |
 | `raw_bidder_response` | `trace.AddBidderResponse(now(), payload.Bidder, payload.BidderResponse)`. |
 | `all_processed_bid_responses` | pass-through (returns `ModuleContext: mc`). Present only because the plan lists the stage. |
-| `auction_response` | `trace.SetFinalResponse(now(), payload.BidResponse)`. |
-| `exitpoint` | if `resp, ok := payload.Response.(*openrtb2.BidResponse); ok` → `trace.SetFinalResponse(now(), resp)`. Then `packet := trace.Packet(now())`; `emitter.Emit(packet)` guarded by `trace.emitted` (FR-08 AC3); `mc.Set(ctxKeyTrace, nil)` to release memory (NFR-02). |
+| `auction_response` | `trace.RememberAuctionResponse(now(), payload.BidResponse)`: pointer and time only; marshaled at `exitpoint` if needed. |
+| `exitpoint` | `resp, ok := payload.Response.(*openrtb2.BidResponse)`; if `!ok` fall back to the remembered auction response and its time → `trace.SetFinalResponse(at, resp)`, one marshal per auction. Then `packet := trace.Packet(now())`; `emitter.Emit(packet)` guarded by `trace.emitted` (FR-08 AC3); `tracer.Complete(trace)` confirms the slot; `mc.Set(ctxKeyTrace, nil)` to release memory (NFR-02). |
 
 `traceFrom(mc)`: `v, ok := mc.Get(ctxKeyTrace); t, _ := v.(*AuctionTrace); return t` — nil-safe for nil `mc` and nil stored value.
 
@@ -164,12 +173,12 @@ sequenceDiagram
 
 | Shared object | Writers | Protection |
 |---------------|---------|------------|
-| `Tracer.partners`, `Tracer.rules` | `Begin` from concurrent requests | `Tracer.mu` around the whole decision (check-and-reserve is atomic → FR-10 AC2) |
+| `Tracer.partners`, `Tracer.rules` | `Begin` and `Complete` from concurrent requests | `Tracer.mu` around the whole decision (check-and-reserve is atomic → FR-10 AC2); reservations are leased and given back in `Begin` once expired unconfirmed (FR-10 AC4) |
 | `hookstage.ModuleContext` | executor + hooks | PBS's own `RWMutex`; the module only stores pointers |
 | `AuctionTrace` fields | concurrent `bidder_request` / `raw_bidder_response` goroutines, then `auction_response`, `exitpoint` | `AuctionTrace.mu`; marshalling happens **outside** the lock, append inside |
 | output queue | `exitpoint` of concurrent requests (producers), one writer goroutine (consumer) | buffered channel of 64 packets; `Emit` is a non-blocking send |
 | stdout | the writer goroutine only | `jsonEmitter.mu` + single `Write` of the complete line |
-| `Tracer.exhausted` | `Begin` when the last partner stops | `atomic.Bool`, read lock-free at `entrypoint` |
+| `Tracer.exhausted`, `Tracer.deadline` | `Begin`, `Complete` | atomics recomputed under `Tracer.mu`, read lock-free at `entrypoint`: exhausted once nothing can be given back, deadline once every partner has started |
 
 The module creates one goroutine per process: the output writer, started by `Builder` and stopped by `Shutdown`. No hook blocks.
 

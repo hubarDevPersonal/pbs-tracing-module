@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Emitter writes trace packets. The production implementation writes NDJSON to stdout.
@@ -20,9 +21,17 @@ var ErrEmitterClosed = errors.New("emitter is closed")
 // ErrQueueFull is returned by asyncEmitter.Emit when the packet had to be dropped.
 var ErrQueueFull = errors.New("trace queue is full, packet dropped")
 
-// defaultQueueSize bounds the packets waiting for stdout. Each packet holds the full auction (tens of
-// KB with debug responses), so the queue is kept small; the rules already cap how many exist.
+// defaultQueueSize bounds the packets waiting for stdout. A packet holds the whole auction: with the
+// sample request ~10 KB, with a request at PBS's 256 KiB size limit and four bidders up to ~1.3 MB,
+// so the queue is worth at most ~80 MB in the worst case; the rules already cap how many exist.
 const defaultQueueSize = 64
+
+// dropLogEvery rate-limits the warning about dropped packets.
+const dropLogEvery = 100
+
+// closeTimeout bounds Close: PBS's graceful stop must not hang on a stdout nobody reads.
+// A variable so tests can shorten it.
+var closeTimeout = 5 * time.Second
 
 // asyncEmitter decouples the hooks from stdout. Emit enqueues and returns at once; one goroutine drains
 // the queue into next. A stalled stdout therefore never delays an auction response (NFR-01): the
@@ -68,14 +77,19 @@ func (e *asyncEmitter) Emit(packet TracePacket) error {
 	case e.queue <- packet:
 		return nil
 	default:
-		return fmt.Errorf("%w (%d dropped so far)", ErrQueueFull, e.dropped.Add(1))
+		n := e.dropped.Add(1)
+		if n == 1 || n%dropLogEvery == 0 { // stderr is synchronous: log the first drop and then every dropLogEvery-th
+			warnf("%v (%d dropped so far)", ErrQueueFull, n)
+		}
+		return ErrQueueFull
 	}
 }
 
 // Dropped returns the number of packets dropped because the queue was full.
 func (e *asyncEmitter) Dropped() int64 { return e.dropped.Load() }
 
-// Close stops accepting packets and waits until the queued ones are written. Idempotent.
+// Close stops accepting packets and waits, at most closeTimeout, until the queued ones are
+// written. Idempotent. It returns an error when the writer did not finish in time.
 func (e *asyncEmitter) Close() error {
 	e.mu.Lock()
 	if !e.closed {
@@ -83,8 +97,12 @@ func (e *asyncEmitter) Close() error {
 		close(e.queue)
 	}
 	e.mu.Unlock()
-	<-e.done
-	return nil
+	select {
+	case <-e.done:
+		return nil
+	case <-time.After(closeTimeout):
+		return fmt.Errorf("%s: stdout did not drain within %s, %d packets not written", ModuleCode, closeTimeout, len(e.queue)+1)
+	}
 }
 
 // jsonEmitter writes one JSON object per line to w with a single Write call per packet, so

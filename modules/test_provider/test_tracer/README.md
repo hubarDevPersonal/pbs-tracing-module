@@ -107,6 +107,18 @@ make test                                                     # from the reposit
 go test ./modules/test_provider/test_tracer -race -run '^TestRace' -count 3
 ```
 
+## Privacy
+
+The trace holds the request as received and the response as sent. PBS's activity controls scrub only the payloads of
+`processed_auction_request` and `bidder_request`, so user identifiers, IP addresses and geo in the raw request and in the response
+reach stdout unchanged. Send stdout only where the request logs may go.
+
+## Changing the rules
+
+Add or edit a line in `rules_default.go` and rebuild PBS (`make docker-build` from the repository root, or `go build` in the PBS
+tree after `scripts/install-module.sh`). Rules are validated at startup; a bad rule stops PBS with `failed to init
+"test_provider.test_tracer" module`.
+
 ## Maintainer
 
-Artem Hubar — technical assessment submission.
+Artem Hubar, hubar.dev@gmail.com — technical assessment submission.

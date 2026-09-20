@@ -1,7 +1,6 @@
 package testtracer
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +25,8 @@ type AuctionTrace struct {
 	bidderRequests  []BidderRequestPacket
 	bidderResponses []BidderResponsePacket
 	final           *ResponsePacket
+	auctionResp     *openrtb2.BidResponse // seen at auction_response, marshaled only as a fallback
+	auctionRespAt   time.Time
 	emitted         bool
 }
 
@@ -41,12 +42,13 @@ func (a *AuctionTrace) PacketIndex() int { return a.packetIndex }
 // StartedAt returns the trigger time (processed_auction_request) recorded by Tracer.Begin.
 func (a *AuctionTrace) StartedAt() time.Time { return a.startedAt }
 
-// SetIncomingRequest stores a copy of the raw incoming body and its timestamp (FR-04).
+// SetIncomingRequest stores the raw incoming body and its timestamp (FR-04). The trace takes
+// ownership of body: callers pass the copy taken at entrypoint or a freshly marshaled buffer.
 // A body that is not valid JSON is embedded as a JSON string so the packet stays well-formed.
 func (a *AuctionTrace) SetIncomingRequest(at time.Time, body []byte) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.incoming = &RequestPacket{Timestamp: at.UTC(), Body: rawJSON(bytes.Clone(body))}
+	a.incoming = &RequestPacket{Timestamp: at.UTC(), Body: rawJSON(body)}
 }
 
 func (a *AuctionTrace) hasIncomingRequest() bool {
@@ -98,6 +100,28 @@ func (a *AuctionTrace) SetFinalResponse(at time.Time, resp *openrtb2.BidResponse
 	defer a.mu.Unlock()
 	a.final = &ResponsePacket{Timestamp: at.UTC(), Body: raw}
 	return nil
+}
+
+// RememberAuctionResponse keeps the response seen at auction_response and its time (FR-07 AC1);
+// it is marshaled at exitpoint only if the exitpoint payload is not a bid response, so the
+// common path marshals the final response once.
+func (a *AuctionTrace) RememberAuctionResponse(at time.Time, resp *openrtb2.BidResponse) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.auctionResp, a.auctionRespAt = resp, at
+}
+
+// AuctionResponse returns what RememberAuctionResponse kept; resp is nil if nothing was.
+func (a *AuctionTrace) AuctionResponse() (resp *openrtb2.BidResponse, at time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.auctionResp, a.auctionRespAt
+}
+
+func (a *AuctionTrace) isEmitted() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.emitted
 }
 
 // tryMarkEmitted flips the emitted flag; it returns true only for the first caller (FR-08 AC3).

@@ -38,11 +38,11 @@ Therefore for the sample request `Account.ID == "664-025-677-881"`, not `"33415-
 `config.HookExecutionPlan` declares `Groups []HookExecutionGroup`, but the provided file writes `groups:` as a mapping, not a list.
 Verified live: viper decodes with `WeaklyTypedInput`, so the mapping is coerced into a one-element slice and the resolved-config log
 shows `stages[...].groups: <[]config.HookExecutionGroup Value>` for all seven stages. The file works as-is. The canonical list form
-(`groups: [ { timeout: ..., hook_sequence: [...] } ]`) is used in the e2e overlay to avoid relying on the coercion.
+(`groups: [ { timeout: ..., hook_sequence: [...] } ]`) is what a production configuration should use; the e2e suite runs the provided file unchanged and therefore relies on the coercion.
 
 ### 2.3 The `test: 1` premise did not hold on 2026-09-16
 
-The README states `test: 1` forces at least one valid bid from `appnexus`. A live run of the unmodified sample against PBS master
+The task statement says `test: 1` forces at least one valid bid from `appnexus`. A live run of the unmodified sample against PBS master
 returned HTTP 200 in ~0.37 s with an empty `seatbid`; `ext.debug.httpcalls` shows all four bidders answering **204 No Content**
 (`appnexus` → `http://ib.adnxs.com/openrtb2`, status 204). The appnexus adapter returns `nil` from `MakeBids` on 204, and
 `exchange/bidder.go` invokes the `raw_bidder_response` stage only when `MakeBids` returns a non-nil response. Consequence:
@@ -88,7 +88,7 @@ so this is not fill rate.
 **Conclusion.** The assessment placement's only ad is a zero-price house creative that Xandr serves over the Prebid.js protocol;
 the OpenRTB endpoint PBS uses returns 204 for it, and PBS would in any case drop a `price: 0` bid without a deal id
 (`exchange/bidder_validate_bids.go`; the `raw_bidder_response` hook would have fired first). The documented test placement is
-decommissioned. The README's `test: 1` premise therefore cannot be reproduced today from any network via Prebid Server; the only
+decommissioned. The task statement's `test: 1` premise therefore cannot be reproduced today from any network via Prebid Server; the only
 normative text is the PBS endpoint documentation — the `test` flag means bidders "may not perform a normal auction", never that a
 bid is guaranteed — and 204 is the adapter contract for no-bid. Getting a bid from adyoulike, aceex or appnexus requires ids
 issued by them.
@@ -98,7 +98,7 @@ Practical notes for anyone repeating this: Proton VPN's resolver returns NXDOMAI
 
 Consequences for verification (the end-to-end suite in `test/e2e`):
 
-- phase A runs the assessment request **verbatim**: items 1, 2 and 4 asserted strictly; item 3 on shape only (`STRICT_BIDS=1` to enforce);
+- phase A runs the assessment request **verbatim**: items 1, 2 and 4 asserted strictly; item 3 on shape only;
 - phase B runs [testdata/bid-request-live-bid.json](../testdata/bid-request-live-bid.json) — the same request plus the onetag test
   publisher, with `parentAccount` removed so `Account.ID` resolves to `33415-10498` (second rule, one packet): item 3 is asserted
   **strictly**, i.e. `raw_bidder_response` is exercised live and the packet carries onetag's bid;
@@ -135,7 +135,7 @@ PBS logs through glog to stderr. Nothing else writes to stdout, so newline-delim
 - **Stage dispatch is resolved at startup too.** `hooks.NewHookRepository` type-asserts the returned value once against every stage
   interface and stores it per stage. On the request path PBS does a map lookup by module code; there is no reflection. A value that
   implements no stage interface is a startup error.
-- **Shutdown.** `Shutdown() error` (`modules.Shutdowner`) is optional and not implemented: the module holds no connections or buffers to flush.
+- **Shutdown.** `Shutdown() error` (`modules.Shutdowner`) is implemented: PBS calls it on graceful stop (`router.Shutdown`) and the module drains its output queue (D14).
 
 What a request costs is decided by the hooks, not by construction: §3.3 for what PBS spends per hook invocation, design §3 and §9 for what the
 module does in each hook.
@@ -149,8 +149,8 @@ module does in each hook.
 | `processed_auction_request` | `{Request *openrtb_ext.RequestWrapper}` | yes | no | request | yes | First stage where `AccountID` is known → trigger decision. Fallback source for item 1. |
 | `bidder_request` | `{Request *RequestWrapper; Bidder string}` | yes | **yes** | request | yes | Item 2. |
 | `raw_bidder_response` | `{BidderResponse *adapters.BidderResponse; Bidder string}` | yes | **yes** | response | yes | Item 3. Skipped for 204 / adapter errors. |
-| `all_processed_bid_responses` | `{Responses map[BidderName]*PbsOrtbSeatBid}` | yes | no | no | no | Not required; implemented as no-op because the plan lists it. |
-| `auction_response` | `{BidResponse *openrtb2.BidResponse}` | yes | no | no | no | Item 4 (typed). Runs before `ext.prebid.modules` debug enrichment. |
+| `all_processed_bid_responses` | `{Responses map[BidderName]*PbsOrtbSeatBid}` | yes | no | responses | no | Not required; implemented as no-op because the plan lists it. |
+| `auction_response` | `{BidResponse *openrtb2.BidResponse}` | yes | no | response | no | Item 4 (typed). Runs before `ext.prebid.modules` debug enrichment. |
 | `exitpoint` | `{Response any; W http.ResponseWriter}` | yes | no | response | no | Item 4 (exact object that is JSON-encoded). Last hook → flush point. |
 
 ### 3.3 Execution semantics (`hooks/hookexecution`)
@@ -171,9 +171,9 @@ module does in each hook.
 - After each stage the executor stores `HookResult.ModuleContext` per module (`moduleContexts.put`); the first stored pointer is kept and later values are merged into it with `SetAll`. Storing a pointer to a per-request struct in the context therefore survives all stages, including concurrent per-bidder stages.
 - `hookstage.ModuleContext` is `sync.RWMutex`-guarded; `Get`/`Set` on a nil receiver are safe no-ops.
 - A hook error is recorded as a failure outcome; the auction proceeds. `Reject == true` is honoured only on rejectable stages. Payload changes are applied only via `ChangeSet` mutations. A tracing module returns no mutations and never rejects.
-- Panics inside hooks are recovered and logged by the executor. The module must still be panic-free.
+- Panics inside hooks are recovered and logged by the executor, but the recovered goroutine sends no result, so the executor waits the full group timeout before moving on: with the provided 120 000 ms a panicking hook would hold the request for two minutes. The module must be panic-free.
 - The exchange starts one goroutine per bidder (`exchange/exchange.go`); `bidder_request` and `raw_bidder_response` for different bidders run concurrently. A bidder that issues several HTTP calls yields several `raw_bidder_response` invocations.
-- `bidder_request` payloads may be a privacy-scrubbed copy of the request when activity controls deny user FPD or precise geo (`handleModuleActivities`). The trace records what PBS exposes to modules.
+- `processed_auction_request` and `bidder_request` payloads may be a privacy-scrubbed copy of the request when activity controls deny user FPD or precise geo (`handleModuleActivities`); the `entrypoint` body, `auction_response` and `exitpoint` payloads are not scrubbed. The trace records what PBS exposes to modules, so item 1 (raw body) and item 4 carry whatever the request and response carry (spec §6, module README).
 - `auction_response` and `exitpoint` are both invoked from `sendAuctionResponse`, also on hook rejection paths. Neither runs when PBS fails the request early with 4xx/5xx (`writeError`). `exitpoint` receives the very object passed to the JSON encoder, after `response.ext.prebid.modules` enrichment.
 - Hook outcomes appear in `response.ext.prebid.modules` when the request has `ext.prebid.debug: true` and the account allows debug (`trace: "verbose"` adds debug messages). The sample request enables this, which makes hook execution visible in the HTTP response for verification.
 
@@ -215,21 +215,21 @@ Checked on 2026-09-16 against the two pages referenced by the assessment:
 | D10 | Bidder response representation | marshal `adapters.BidderResponse` | **explicit snake_case DTO** | `adapters.BidderResponse` / `TypedBid` have no JSON tags. |
 | D11 | Amount limit under concurrent requests | count on completion / reserve on start | **reserve the slot at trigger time** | Guarantees the count never exceeds `TracePacketsAmount` even with parallel requests. |
 | D12 | Endpoint scoping | rely on plan / check in module | **both** — module ignores `miCtx.Endpoint != "/openrtb2/auction"` | Defence in depth; costs one string compare. |
-| D13 | Traces whose `exitpoint` never runs (early 4xx/5xx) | print partial / drop | **drop**; the reserved packet slot stays consumed | Rare; a partial packet has no final response by definition. There is no hook PBS invokes on the 500 path (`auction.go` returns before `sendAuctionResponse`), so the module cannot detect the loss; see §5 item 6. |
+| D13 | Traces whose `exitpoint` never runs (early 4xx/5xx) | print partial / drop and keep the slot / drop and give the slot back | **drop; the slot is given back once its 5-minute lease expires unconfirmed** | A partial packet has no final response by definition. There is no hook PBS invokes on the 500 path (`auction.go` returns before `sendAuctionResponse`), so the loss cannot be detected at once; a lease longer than any auction PBS lets run detects it late but surely, and the amount then counts collected packets as the task says. See §5 item 6. |
 
 ## 5. Risks and open questions for the reviewer
 
 1. D1 (packet = auction) is the main interpretation risk. The counter is isolated in one function so switching to per-event counting is a small change.
 2. Trace bodies can be large (full requests and responses). Hardcoded rules bound the total; no truncation is applied.
 3. The sample's four bidders return 204 from this network; item 3 is proven live through phase B of the e2e (onetag test publisher) and at unit/integration level. The assessment request itself stays unchanged in phase A.
-4. Hook timeouts are generous (120 s) in the provided config; the module still keeps hooks allocation-light and non-blocking except for the stdout write.
+4. Hook timeouts are generous (120 s) in the provided config; the module still keeps hooks allocation-light and non-blocking; stdout is written by a separate goroutine (D14).
 5. The provided `groups` mapping relies on viper's weak typing; harmless today, brittle if PBS tightens decoding.
-6. **Slot consumed without a packet.** `Tracer.Begin` reserves the packet slot at `processed_auction_request`. If `HoldAuction`
+6. **Slot reserved without a packet.** `Tracer.Begin` reserves the packet slot at `processed_auction_request`. If `HoldAuction`
    then fails with a non-reject error, PBS writes 400/500 directly and never runs `auction_response`/`exitpoint`
-   (`endpoints/openrtb2/auction.go`, `writeError` paths), so nothing is printed and the slot is gone; with `TracePacketsAmount: 1`
-   the partner ends stopped with zero packets and never re-arms (FR-11). Accepted for the assessment: the module has no hook on
-   that path. A production version would count the slot at `exitpoint` (allowing brief overshoot under concurrency) or release
-   it via `Shutdowner`-style bookkeeping keyed by request id.
+   (`endpoints/openrtb2/auction.go`, `writeError` paths), so nothing is printed. The slot stays reserved for 5 minutes and is then
+   given back (FR-10 AC4); with `TracePacketsAmount: 1` the partner is stopped for those 5 minutes, then traces the next request if
+   its window is still open. The module has no hook on
+   that path, which is why the loss is detected by the lease and not at once.
 7. **Trigger is client-controlled.** With `account_required: false` the `Account.ID` PBS resolves is whatever the caller puts in
    `publisher.ext.prebid.parentAccount` / `publisher.id`, so anyone who knows a `PartnerID` can exhaust its one-shot budget and
    place arbitrary request bodies into the host's stdout. Inherent to the assessment's configuration; in production the rule set

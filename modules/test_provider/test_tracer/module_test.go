@@ -99,3 +99,13 @@ func TestModule_ShutdownDrainsQueuedPackets(t *testing.T) {
 	require.NoError(t, syncErr)
 	assert.NoError(t, sync.Shutdown(), "a synchronous emitter has nothing to drain")
 }
+
+// M-29. FR-15 AC3: a panic inside a hook becomes a logged warning and a successful empty result,
+// instead of PBS waiting for the whole group timeout.
+func TestRecoverHook_TurnsPanicIntoSuccess(t *testing.T) {
+	run := func() (err error) {
+		defer recoverHook(&err)
+		panic("boom")
+	}
+	assert.NoError(t, run())
+}
