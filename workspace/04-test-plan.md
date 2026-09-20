@@ -16,6 +16,12 @@ requirements. What each test checks is in the test specifications. Results belon
 - **The e2e suite decodes the trace with its own types**, restated from the JSON contract (spec §5), and never imports the module.
   A change in the module that breaks the contract fails the e2e suite instead of silently updating it.
 
+Every functional requirement has at least one scenario, and so do NFR-01 and NFR-02. NFR-03 to NFR-07 have none, because a
+Given / When / Then scenario is the wrong instrument for them: NFR-03 (builds with the PBS toolchain, no new dependencies) and
+NFR-04 (`gofmt`, `go vet`, `TestRace*` naming) are demonstrated by the Docker build stage and by CI, NFR-05 (injectable clock and
+writer) by the unit levels existing at all, NFR-06 (internal errors go to the PBS logger, nothing else on the happy path) by the
+scenarios for FR-15 AC2 and FR-08 AC2, and NFR-07 (no bids, no mutations, no outbound calls) by §4's exit criteria and by review.
+
 A change of behaviour starts in the specification, then the test specifications, then the tests, then the code.
 
 ## 2. Levels
