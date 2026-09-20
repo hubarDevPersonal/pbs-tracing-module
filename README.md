@@ -76,6 +76,46 @@ to `Account.ID = 664-025-677-881` (`site.publisher.ext.prebid.parentAccount`), w
 Strategy: [workspace/04-test-plan.md](workspace/04-test-plan.md). Scenarios per level, independent of the code:
 [workspace/test-specs/](workspace/test-specs/). Running the load suite and the perf profile: [workspace/05-runbook.md](workspace/05-runbook.md) §8.
 
+## Assessment requirements and their evidence
+
+Every line of [the task](workspace/assessment/00-assessment.md) with what proves it. Scenario ids are defined in
+[workspace/test-specs/](workspace/test-specs/): `M` module in process, `E` end to end against the image and live bidders,
+`L` load. `make test` runs every `M` scenario; `make e2e` the `E` ones; `make load-bench` `L-05` to `L-09`.
+
+| Task | Evidence | Limit to know |
+|------|----------|---------------|
+| A custom PBS module in Go, registered through the hooks framework | M-01, M-32 (PBS's real hook executor), E-01 (no "Not found hook", every hook `success`) | |
+| 1. Incoming BidRequest and its timestamp | M-07, M-08, M-09, E-03 | body as PBS received it at `entrypoint`, before stored-request merge |
+| 2. Outgoing BidRequest per bidder, timestamp, bidder name | M-10, M-11, M-12, E-03 | the per-bidder request the hook exposes, before the adapter builds its HTTP call; timestamp is the hook time |
+| 3. Incoming BidResponse per bidder, timestamp, bidder name | M-13, M-14, E-05 | the adapter's parsed result the hook exposes, not the HTTP body; a bidder answering 204 has no entry (PBS never calls the hook) |
+| 4. Final auction response and its timestamp | M-15, E-03 | the object PBS encodes to the client, including `ext.debug` when requested |
+| Trace as JSON on stdout | M-16, M-17, M-18, M-19, M-31, M-35, E-06 | one NDJSON line per auction, written through a bounded queue |
+| Hardcoded rules `{PartnerID, Duration, TracePacketsAmount}` | M-02, M-03, M-04; [rules_default.go](modules/test_provider/test_tracer/rules_default.go) | invalid rules stop PBS at startup |
+| Trigger: `Account.ID` equals a rule's `PartnerID` | M-05, M-06, E-02, E-04 | decided on PBS's own resolved account, at `processed_auction_request` |
+| Stop: time since the first traced BidRequest exceeds `Duration` | M-20, M-23 | window opens at the incoming timestamp of the first traced request |
+| Stop: `TracePacketsAmount` traces collected | M-21, M-22, M-25, E-02, E-05 | slot reserved at trigger time, so concurrency never overshoots |
+| `Account.ID` maps to `PartnerID` | M-04, [analysis §2.1](workspace/01-analysis.md) | the sample resolves to `parentAccount` `664-025-677-881`, not `publisher.id` |
+| `test: 1` yields an appnexus bid | not reproducible from any network tried, [analysis §2.3](workspace/01-analysis.md) | item 3 is proven live with onetag's test publisher (phase B of `make e2e`) |
+| Only `/openrtb2/auction` | M-26 | checked by the plan and by every hook |
+| Fit for a high-load server (implied) | L-01 … L-09; [bench numbers](https://github.com/hubarDevPersonal/pbs-tracing-module/pull/14) | hooks cost tens of µs; a stalled stdout drops packets instead of delaying auctions |
+
+## Decisions and limits
+
+Where the implementation had to choose, or cannot do what a literal reading asks. All are argued in
+[workspace/01-analysis.md](workspace/01-analysis.md) §4 and §5.
+
+- **A packet is one auction**, not one collected event. `TracePacketsAmount` counts auctions (D1).
+- **Items 2 and 3 are hook payloads.** PBS hooks see the per-bidder request before the adapter's `MakeRequests` and the adapter's
+  result after `MakeBids`; the HTTP bodies never reach a module. Capturing them is a PBS-core change (D15).
+- **A stdout that stops draining loses packets**, it never delays a response. The queue holds 64 packets; overflow is counted and
+  logged; `Shutdown` drains on graceful stop (D14).
+- **A slot is consumed when PBS fails the auction with 4xx/5xx after the trigger**: `exitpoint` does not run on that path, so no
+  packet is written and the slot is not released (D13).
+- **Rule state is per process.** Replicas and restarts have independent windows and limits; the task asks for no cluster-wide quota.
+- **The sample's four bidders never bid** from any network tried (analysis §2.3.1), so item 3 cannot be shown with the sample
+  request alone. `make e2e` proves it with a second request that adds onetag's test publisher.
+- **Traces started before a stop condition complete and are written** (D3).
+
 ## Known behaviour with live bidders
 
 With the sample request all four bidders answer HTTP 204 from this network (also when calling appnexus directly), so Prebid
