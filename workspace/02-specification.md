@@ -91,8 +91,12 @@ at `exitpoint`. A new trace is refused while every slot is reserved or confirmed
 - AC3: The partner is marked stopped with reason `amount_reached` while all slots are held.
 - AC4: A reservation that is not confirmed within 5 minutes — PBS failed the auction after the trigger, or the `entrypoint` hook
   timed out and the module lost its context, so `exitpoint` never wrote the packet — is given back: the next matching request
-  takes the slot and the partner is no longer stopped for amount. A confirmed slot is never given back. The amount therefore counts collected packets, and an auction that PBS would still be running after 5 minutes is the
-  only way to exceed it, by one.
+  takes the slot and the partner is no longer stopped for amount. A confirmed slot is never given back.
+- AC5: A slot given back is revoked. Its old auction may still be running — the provided `pbs.yaml` allows auctions of up to
+  10 minutes (`auction_timeouts_ms.max`), longer than the lease — and if it reaches `exitpoint` it writes nothing and the loss is
+  logged. Claiming a slot for the packet and revoking it exclude each other, so every slot is written by at most one auction and a
+  partner never gets more than `TracePacketsAmount` packets, whatever the auction timeouts. The price is the packet of an auction
+  that outlived its lease *and* whose slot another auction took; an auction nobody displaced still writes.
 
 ### FR-11 Whichever occurs first; no re-arm
 - AC1: Once stopped for duration the partner is never traced again during the process lifetime, regardless of clock progress; once
@@ -100,7 +104,8 @@ at `exitpoint`. A new trace is refused while every slot is reserved or confirmed
 - AC2: Partners are independent: stopping one does not affect another.
 
 ### FR-12 In-flight traces complete
-- AC1: A trace started before a stop condition is fully collected and printed at its `exitpoint`.
+- AC1: A trace started before a stop condition is fully collected and printed at its `exitpoint`, unless its slot was revoked
+  (FR-10 AC5).
 - If PBS fails the auction with 4xx/5xx after the trace started, `exitpoint` is not invoked, nothing is printed, and the slot is
   given back after the lease of FR-10 AC4 (analysis §5.6). The same holds when the `entrypoint` hook timed out: the executor
   then keeps a nil module context for the whole request, so the trace never reaches `exitpoint` (analysis §3.3).
@@ -138,7 +143,7 @@ at `exitpoint`. A new trace is refused while every slot is reserved or confirmed
 ```text
 Rule           { PartnerID, Duration, TracePacketsAmount }              // immutable, hardcoded
 PartnerState   { firstTracedAt time.Time, packets int, stopReason, pending []Reservation }   // per PartnerID, mutex-guarded
-Reservation    { startedAt time.Time, emitted bool }                    // one slot; the state never holds a trace
+Reservation    { startedAt time.Time, state pending|emitted|revoked }   // one slot; the state never holds a trace
 
 Begin(partnerID, incomingAt, now):                                     // incomingAt: entrypoint time of the request
   rule, ok := rules[partnerID];            if !ok            → not traced
@@ -154,6 +159,9 @@ Begin(partnerID, incomingAt, now):                                     // incomi
   → traced, packetIndex = st.packets
 
 Complete(trace):  st.pending -= trace's reservation          // slot confirmed at exitpoint
+
+A reservation leaves `pending` state once: to `emitted` when exitpoint claims it, or to `revoked` when the lease gives it back.
+Both are compare-and-swap from `pending`, so they exclude each other; a revoked trace writes nothing (FR-10 AC5).
 ```
 
 State diagram per partner: `idle → tracing → stopped(duration_exceeded | amount_reached)`; `duration_exceeded` is terminal,

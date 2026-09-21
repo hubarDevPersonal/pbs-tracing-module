@@ -19,8 +19,10 @@ const (
 // slotLease bounds how long a reserved packet slot may stay unconfirmed. A slot is reserved when a
 // trace starts and confirmed when its packet is written at exitpoint. PBS runs no hook when it fails
 // an auction with 4xx/5xx after the trigger, so such a trace never confirms; once its lease is over
-// the slot is given back, and the partner's amount counts collected packets again (FR-10, D13).
-// The lease is longer than any auction PBS would let run.
+// the slot can be given back, and the partner's amount counts collected packets again (FR-10, D13).
+// The lease does not have to outlast every auction: PBS allows tmax up to auction_timeouts_ms.max, 10
+// minutes in the provided pbs.yaml. A slot given back is revoked, and the auction that held it can no
+// longer write its packet, so an auction still running past its lease costs its own packet, never the limit.
 const slotLease = 5 * time.Minute
 
 // Tracer owns the process-wide, per-partner tracing state and applies the trigger and stop
@@ -50,8 +52,17 @@ type partnerState struct {
 // request ends, whether the packet was written or PBS abandoned the auction after the trigger (NFR-02).
 type reservation struct {
 	startedAt time.Time
-	emitted   atomic.Bool // the packet has been handed to the output; the lease can no longer give the slot back
+	state     atomic.Int32 // slotPending, then slotEmitted or slotRevoked, once
 }
+
+// A slot leaves slotPending exactly once, by compare-and-swap: to slotEmitted when exitpoint claims it
+// for the packet, or to slotRevoked when an expired lease gives it to another auction. The two swaps
+// exclude each other, so every slot is written by at most one auction (FR-10 AC2, AC4).
+const (
+	slotPending int32 = iota
+	slotEmitted
+	slotRevoked
+)
 
 // PartnerStatus is a read-only view of a partner's state for tests and diagnostics.
 type PartnerStatus struct {
@@ -171,11 +182,12 @@ func (t *Tracer) Complete(trace *AuctionTrace) {
 	t.refresh()
 }
 
-// reclaim gives back the slots whose lease is over and whose packet was never written. Caller holds t.mu.
+// reclaim gives back the slots whose lease is over and whose packet was not claimed. Caller holds t.mu.
 func (t *Tracer) reclaim(st *partnerState, rule Rule, now time.Time) {
 	before := len(st.pending)
 	st.pending = slices.DeleteFunc(st.pending, func(r *reservation) bool { // clears the tail of the backing array
-		return now.Sub(r.startedAt) > slotLease && !r.emitted.Load()
+		// Revoke, not just forget: the auction that held the slot may still reach exitpoint.
+		return now.Sub(r.startedAt) > slotLease && r.state.CompareAndSwap(slotPending, slotRevoked)
 	})
 	st.packets -= before - len(st.pending)
 	if st.stopReason == StopReasonAmount && st.packets < rule.TracePacketsAmount {

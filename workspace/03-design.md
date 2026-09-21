@@ -62,7 +62,7 @@ type partnerState struct {
 }
 type reservation struct {                           // one slot; the tracer keeps these, never the traces (NFR-02)
     startedAt time.Time                             // lease start (FR-10 AC4)
-    emitted   atomic.Bool                           // packet handed to the output: the lease cannot give the slot back
+    state     atomic.Int32                          // pending → emitted (exitpoint) or pending → revoked (lease), once
 }
 type PartnerStatus struct { Packets int; FirstTracedAt time.Time; StopReason StopReason }   // read-only view for tests/ops
 func newTracer(rules []Rule, now func() time.Time) (*Tracer, error)
@@ -140,7 +140,7 @@ All handlers return `Reject=false`, no mutations, `nil` error (FR-15). Internal 
 | `raw_bidder_response` | `trace.AddBidderResponse(now(), payload.Bidder, payload.BidderResponse)`. |
 | `all_processed_bid_responses` | pass-through (returns `ModuleContext: mc`). Present only because the plan lists the stage. |
 | `auction_response` | `trace.RememberAuctionResponse(now(), payload.BidResponse)`: pointer and time only; marshaled at `exitpoint` if needed. |
-| `exitpoint` | `resp, ok := payload.Response.(*openrtb2.BidResponse)`; if `!ok` fall back to the remembered auction response and its time → `trace.SetFinalResponse(at, resp)`, one marshal per auction. Then `packet := trace.Packet(now())`; `emitter.Emit(packet)` guarded by the `emitted` flag of the trace's reservation (FR-08 AC3); `tracer.Complete(trace)` confirms the slot; `mc.Set(ctxKeyTrace, nil)` to release memory (NFR-02). |
+| `exitpoint` | `resp, ok := payload.Response.(*openrtb2.BidResponse)`; if `!ok` fall back to the remembered auction response and its time → `trace.SetFinalResponse(at, resp)`, one marshal per auction. Then `packet := trace.Packet(now())`; `emitter.Emit(packet)` only if the trace wins its reservation (pending → emitted; FR-08 AC3), otherwise a revoked trace logs the lost packet and releases the context (FR-10 AC5); `tracer.Complete(trace)` confirms the slot; `mc.Set(ctxKeyTrace, nil)` to release memory (NFR-02). |
 
 `traceFrom(mc)`: `v, ok := mc.Get(ctxKeyTrace); t, _ := v.(*AuctionTrace); return t` — nil-safe for nil `mc` and nil stored value.
 
@@ -185,7 +185,7 @@ sequenceDiagram
 | Shared object | Writers | Protection |
 |---------------|---------|------------|
 | `Tracer.partners`, `Tracer.rules` | `Begin` and `Complete` from concurrent requests | `Tracer.mu` around the whole decision (check-and-reserve is atomic → FR-10 AC2); reservations are leased and given back in `Begin` once expired unconfirmed (FR-10 AC4) |
-| `reservation.emitted` | `exitpoint` sets it, `Begin` reads it when giving back leases | `atomic.Bool`: set with compare-and-swap, so exactly one `exitpoint` writes the packet |
+| `reservation.state` | `exitpoint` claims the slot, `Begin` revokes expired ones | `atomic.Int32`; both transitions are compare-and-swap from pending, so a slot is written or given back, never both (FR-10 AC5) |
 | `hookstage.ModuleContext` | executor + hooks | PBS's own `RWMutex`; the module only stores pointers |
 | `AuctionTrace` fields | concurrent `bidder_request` / `raw_bidder_response` goroutines, then `auction_response`, `exitpoint` | `AuctionTrace.mu`; marshalling happens **outside** the lock, append inside |
 | output queue | `exitpoint` of concurrent requests (producers), one writer goroutine (consumer) | buffered channel of 64 packets; `Emit` is a non-blocking send |

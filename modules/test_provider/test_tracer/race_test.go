@@ -1,6 +1,7 @@
 package testtracer
 
 import (
+	"context"
 	"errors"
 	"net/http/httptest"
 	"sync"
@@ -185,4 +186,54 @@ func TestRaceAsyncEmitterEmitDuringClose(t *testing.T) {
 	wg.Wait()
 
 	assert.Equal(t, 64, len(out.Packets(t))+int(refused.Load())+int(em.Dropped()), "every emit was written, refused or dropped")
+}
+
+// M-39. FR-10 AC2, AC4: old auctions reach exitpoint while new ones claim their expired slots. Whichever
+// order the goroutines take, each slot is written by exactly one auction.
+func TestRaceExpiredLeaseAndExitpointNeverBothWrite(t *testing.T) {
+	const amount = 3
+	for range 100 {
+		clock := newFakeClock(testStart)
+		m, out := newTestModule(t, []Rule{{PartnerID: sampleRequestAccountID, Duration: time.Hour, TracePacketsAmount: amount}}, clock)
+		body := loadSampleRequest(t)
+		exit := func(mc *hookstage.ModuleContext) {
+			_, err := m.HandleExitpointHook(context.Background(), auctionCtx(sampleRequestAccountID, mc),
+				hookstage.ExitpointPayload{Response: sampleBidResponse("r"), W: httptest.NewRecorder()})
+			assert.NoError(t, err)
+		}
+
+		slow := make([]*hookstage.ModuleContext, 0, amount)
+		for range amount {
+			slow = append(slow, tracedContext(t, m, sampleRequestAccountID, body))
+		}
+		clock.Advance(slotLease + time.Second)
+		fresh := make([]*hookstage.ModuleContext, 0, amount)
+		payloads := make([]hookstage.ProcessedAuctionRequestPayload, 0, amount)
+		for range amount {
+			entry, err := m.HandleEntrypointHook(t.Context(), auctionCtx("", nil), entrypointPayload(body))
+			require.NoError(t, err)
+			fresh = append(fresh, entry.ModuleContext)
+			payloads = append(payloads, hookstage.ProcessedAuctionRequestPayload{Request: requestWrapperFrom(t, body)})
+		}
+
+		var wg sync.WaitGroup
+		for i := range amount {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				exit(slow[i])
+			}()
+			go func() {
+				defer wg.Done()
+				_, err := m.HandleProcessedAuctionHook(context.Background(), auctionCtx(sampleRequestAccountID, fresh[i]), payloads[i])
+				assert.NoError(t, err)
+			}()
+		}
+		wg.Wait()
+		for _, mc := range fresh {
+			exit(mc)
+		}
+
+		require.LessOrEqual(t, len(out.Packets(t)), amount, "a slot was written twice")
+	}
 }

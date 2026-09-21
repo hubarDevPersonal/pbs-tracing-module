@@ -91,6 +91,7 @@ for `test_provider.test_tracer`; each invocation should show `"status": "success
 | stdout mixed with logs | logs not redirected | run with `2>pbs.log` |
 | Port 8080 busy | another PBS/service | `lsof -iTCP:8080 -sTCP:LISTEN` |
 | Partner stopped with fewer packets than `TracePacketsAmount` | an auction failed with 4xx/5xx after the trace started; PBS skips `exitpoint` on that path and the slot stays reserved for 5 minutes (analysis §5.6) | wait for the lease to expire or restart PBS; check `pbs.log` for `Critical error while running the auction` |
+| `pbs.log`: `packet not written, the auction outlived its 5m0s slot lease` | an auction ran longer than the 5-minute lease and another auction took its slot; the limit is kept by dropping the slow auction's packet (spec FR-10 AC5) | expected with long `tmax`; lower `tmax` or accept the loss |
 | PBS exits after a traced auction when stdout is a pipe | reader of the pipe exited → `EPIPE` on fd 1 terminates the process (analysis §5.8) | redirect stdout to a file or use a log driver |
 | `:6060` / `:9100` not reachable from another host | published on `127.0.0.1` only on purpose: pprof and metrics are unauthenticated | use an SSH tunnel or an authenticated reverse proxy |
 

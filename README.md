@@ -114,7 +114,7 @@ Every line of [the task](workspace/assessment/00-assessment.md) with what proves
 | Hardcoded rules `{PartnerID, Duration, TracePacketsAmount}` | M-02, M-03, M-04; [rules_default.go](modules/test_provider/test_tracer/rules_default.go) | invalid rules stop PBS at startup |
 | Trigger: `Account.ID` equals a rule's `PartnerID` | M-05, M-06, E-02, E-04 | decided on PBS's own resolved account, at `processed_auction_request` |
 | Stop: time since the first traced BidRequest exceeds `Duration` | M-20, M-23 | measured between request arrivals, from the incoming timestamp of the first traced request |
-| Stop: `TracePacketsAmount` traces collected | M-21, M-22, M-25, M-36, E-02, E-05 | slot reserved at trigger time, so concurrency never overshoots; given back after 5 minutes if the auction never completed |
+| Stop: `TracePacketsAmount` traces collected | M-21, M-22, M-25, M-36, M-39, E-02, E-05 | slot reserved at trigger time, so concurrency never overshoots; given back after 5 minutes if the auction never completed, and then revoked, so an auction slower than that cannot write past the limit |
 | `Account.ID` maps to `PartnerID` | M-04, [analysis §2.1](workspace/01-analysis.md) | the sample resolves to `parentAccount` `664-025-677-881`, not `publisher.id` |
 | `test: 1` yields an appnexus bid | not reproducible from any network tried, [analysis §2.3](workspace/01-analysis.md) | item 3 is proven live with onetag's test publisher (phase B of `make e2e`) |
 | Only `/openrtb2/auction` | M-26 | checked by the plan and by every hook |
@@ -135,6 +135,8 @@ Where the implementation had to choose, or cannot do what a literal reading asks
 - **A slot whose packet never reaches `exitpoint` is given back after 5 minutes.** Two paths lead there: PBS fails the auction
   with 4xx/5xx after the trigger, or the `entrypoint` hook times out and the executor keeps a nil module context for the rest of
   the request. Nothing is written and the loss is detected late; until then the slot counts (D13, FR-10 AC4, analysis §3.3).
+  The lease cannot tell a dead auction from a slow one, and the provided `pbs.yaml` allows auctions of up to 10 minutes. So a slot
+  given back is revoked: a slow auction that lost its slot writes nothing and logs it, and the limit holds (FR-10 AC5, M-39).
 - **The window is measured between request arrivals**, the timestamps the trace reports, and `elapsed == Duration` is still inside
   it (D3).
 - **Anyone who knows a `PartnerID` can trigger a trace** when `account_required` is `false`, as in the provided configuration: the

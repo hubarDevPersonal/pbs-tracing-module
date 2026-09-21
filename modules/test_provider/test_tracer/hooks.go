@@ -180,7 +180,12 @@ func (m *Module) HandleExitpointHook(
 			warnf("auction %s: %v", trace.AuctionID(), err)
 		}
 	}
-	if !trace.tryMarkEmitted() { // FR-08 AC3
+	if !trace.tryMarkEmitted() { // FR-08 AC3: written already; or FR-10 AC4: the slot went to another auction
+		if trace.isRevoked() {
+			warnf("auction %s: packet not written, the auction outlived its %s slot lease and the slot went to another auction",
+				trace.AuctionID(), slotLease)
+			miCtx.ModuleContext.Set(ctxKeyTrace, nil) // NFR-02
+		}
 		return result, nil
 	}
 	if err := m.emitter.Emit(trace.Packet(m.now())); err != nil && !errors.Is(err, ErrQueueFull) { // drops are logged by the emitter, rate-limited

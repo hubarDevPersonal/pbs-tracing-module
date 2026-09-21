@@ -146,6 +146,13 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 - When a matching request arrives within 5 minutes, then another after 5 minutes
 - Then the first is refused and the second is traced with packet index 1; a trace whose packet was written keeps its slot for good
 
+**M-39 An auction that outlives its lease cannot exceed the amount** — FR-10 AC2, AC4
+- Given a partner with amount 3 whose three auctions are still running when their leases end, and three new matching auctions
+  that take the slots given back
+- When all six reach `exitpoint`, in sequence or at the same time as the new auctions claim the slots
+- Then at most 3 packets are written, each slot by exactly one auction: an old auction whose slot was given away writes nothing
+  and the loss is logged
+
 ## Scope and safety
 
 **M-26 Only the auction endpoint is observed** — FR-14 AC1

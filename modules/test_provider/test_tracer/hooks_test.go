@@ -598,3 +598,42 @@ func TestProcessedAuction_FallbackMarshalFailureIsLogged(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out.Packets(t), 1)
 }
+
+// M-39. FR-10 AC2, AC4: the provided pbs.yaml lets an auction run up to 10 minutes, longer than the slot
+// lease. Three auctions still running when their leases end give their slots to three new ones; only the
+// new ones write, so the partner never gets more than TracePacketsAmount packets.
+func TestExitpoint_AuctionThatOutlivedItsLeaseWritesNothing(t *testing.T) {
+	clock := newFakeClock(testStart)
+	m, out := newTestModule(t, []Rule{{PartnerID: sampleRequestAccountID, Duration: 10 * time.Minute, TracePacketsAmount: 3}}, clock)
+	body := loadSampleRequest(t)
+
+	slow := make([]*hookstage.ModuleContext, 0, 3)
+	for range 3 {
+		slow = append(slow, tracedContext(t, m, sampleRequestAccountID, body))
+	}
+	clock.Advance(slotLease + time.Second)
+	reusedAt := clock.Now()
+	fresh := make([]*hookstage.ModuleContext, 0, 3)
+	for range 3 {
+		mc := tracedContext(t, m, sampleRequestAccountID, body)
+		require.NotNil(t, traceIn(mc), "the lease is over, the slot is given back")
+		fresh = append(fresh, mc)
+	}
+	for _, mc := range append(slow, fresh...) {
+		_, err := m.HandleExitpointHook(t.Context(), auctionCtx(sampleRequestAccountID, mc),
+			hookstage.ExitpointPayload{Response: sampleBidResponse("r"), W: httptest.NewRecorder()})
+		require.NoError(t, err)
+	}
+
+	packets := out.Packets(t)
+	require.Len(t, packets, 3, "never more packets than TracePacketsAmount")
+	indices := make([]int, 0, len(packets))
+	for _, p := range packets {
+		assert.False(t, p.StartedAt.Before(reusedAt), "only the auctions that hold the slots write")
+		indices = append(indices, p.PacketIndex)
+	}
+	assert.ElementsMatch(t, []int{1, 2, 3}, indices)
+	for _, mc := range slow {
+		assert.Nil(t, traceIn(mc), "the trace of an auction that lost its slot is released")
+	}
+}

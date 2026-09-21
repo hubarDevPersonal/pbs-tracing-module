@@ -21,7 +21,7 @@ type AuctionTrace struct {
 	packetIndex     int
 	auctionID       string
 	startedAt       time.Time
-	slot            *reservation // the partner's slot this trace holds; also records that the packet was emitted
+	slot            *reservation // the partner's slot this trace holds; its state says whether the packet may be written
 	incoming        *RequestPacket
 	bidderRequests  []BidderRequestPacket
 	bidderResponses []BidderResponsePacket
@@ -118,10 +118,16 @@ func (a *AuctionTrace) AuctionResponse() (resp *openrtb2.BidResponse, at time.Ti
 	return a.auctionResp, a.auctionRespAt
 }
 
-func (a *AuctionTrace) isEmitted() bool { return a.slot.emitted.Load() }
+func (a *AuctionTrace) isEmitted() bool { return a.slot.state.Load() == slotEmitted }
 
-// tryMarkEmitted flips the emitted flag; it returns true only for the first caller (FR-08 AC3).
-func (a *AuctionTrace) tryMarkEmitted() bool { return a.slot.emitted.CompareAndSwap(false, true) }
+// isRevoked reports that an expired lease gave this trace's slot to another auction (FR-10 AC4).
+func (a *AuctionTrace) isRevoked() bool { return a.slot.state.Load() == slotRevoked }
+
+// tryMarkEmitted claims the slot for the packet. It returns true only once, and never after the lease has
+// given the slot away: a second exitpoint (FR-08 AC3) and an auction that outlived its lease both get false.
+func (a *AuctionTrace) tryMarkEmitted() bool {
+	return a.slot.state.CompareAndSwap(slotPending, slotEmitted)
+}
 
 // Packet builds the output object. It never returns nil slices (FR-08 / spec §5).
 func (a *AuctionTrace) Packet(completedAt time.Time) TracePacket {
