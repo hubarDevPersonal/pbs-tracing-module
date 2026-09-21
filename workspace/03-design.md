@@ -50,11 +50,20 @@ type Tracer struct {                                // module-global, one per Mo
     mu        sync.Mutex
     rules     map[string]Rule                       // PartnerID → Rule
     partners  map[string]*partnerState              // PartnerID → state, created lazily
-    stopped   int                                   // partners in a terminal state
     now       func() time.Time
-    exhausted atomic.Bool                           // every partner stopped; read lock-free at entrypoint
+    exhausted atomic.Bool                           // every partner stopped for good; read lock-free at entrypoint
+    deadline  atomic.Int64                          // unix nanos after which every window is closed; 0 = unknown
 }
-type partnerState struct { firstTracedAt time.Time; packets int; stopReason StopReason }
+type partnerState struct {
+    firstTracedAt time.Time
+    packets       int                               // slots taken: written packets plus unconfirmed reservations
+    stopReason    StopReason
+    pending       []*reservation                    // reserved, not yet confirmed; dropped when stopped by duration
+}
+type reservation struct {                           // one slot; the tracer keeps these, never the traces (NFR-02)
+    startedAt time.Time                             // lease start (FR-10 AC4)
+    emitted   atomic.Bool                           // packet handed to the output: the lease cannot give the slot back
+}
 type PartnerStatus struct { Packets int; FirstTracedAt time.Time; StopReason StopReason }   // read-only view for tests/ops
 func newTracer(rules []Rule, now func() time.Time) (*Tracer, error)
 func (t *Tracer) Begin(partnerID, auctionID string, incomingAt time.Time) (*AuctionTrace, bool)   // FR-03, FR-09..FR-11, D11
@@ -69,11 +78,13 @@ type AuctionTrace struct {                          // per traced request, share
     packetIndex     int
     auctionID       string
     startedAt       time.Time
+    slot            *reservation                    // the slot this trace holds; carries the emitted flag
     incoming        *RequestPacket
     bidderRequests  []BidderRequestPacket
     bidderResponses []BidderResponsePacket
     final           *ResponsePacket
-    emitted         bool
+    auctionResp     *openrtb2.BidResponse           // seen at auction_response, marshaled only as a fallback
+    auctionRespAt   time.Time
 }
 func (a *AuctionTrace) SetIncomingRequest(at time.Time, body []byte)                                   // FR-04
 func (a *AuctionTrace) AddBidderRequest(at time.Time, bidder string, req *openrtb2.BidRequest) error   // FR-05
@@ -129,7 +140,7 @@ All handlers return `Reject=false`, no mutations, `nil` error (FR-15). Internal 
 | `raw_bidder_response` | `trace.AddBidderResponse(now(), payload.Bidder, payload.BidderResponse)`. |
 | `all_processed_bid_responses` | pass-through (returns `ModuleContext: mc`). Present only because the plan lists the stage. |
 | `auction_response` | `trace.RememberAuctionResponse(now(), payload.BidResponse)`: pointer and time only; marshaled at `exitpoint` if needed. |
-| `exitpoint` | `resp, ok := payload.Response.(*openrtb2.BidResponse)`; if `!ok` fall back to the remembered auction response and its time → `trace.SetFinalResponse(at, resp)`, one marshal per auction. Then `packet := trace.Packet(now())`; `emitter.Emit(packet)` guarded by `trace.emitted` (FR-08 AC3); `tracer.Complete(trace)` confirms the slot; `mc.Set(ctxKeyTrace, nil)` to release memory (NFR-02). |
+| `exitpoint` | `resp, ok := payload.Response.(*openrtb2.BidResponse)`; if `!ok` fall back to the remembered auction response and its time → `trace.SetFinalResponse(at, resp)`, one marshal per auction. Then `packet := trace.Packet(now())`; `emitter.Emit(packet)` guarded by the `emitted` flag of the trace's reservation (FR-08 AC3); `tracer.Complete(trace)` confirms the slot; `mc.Set(ctxKeyTrace, nil)` to release memory (NFR-02). |
 
 `traceFrom(mc)`: `v, ok := mc.Get(ctxKeyTrace); t, _ := v.(*AuctionTrace); return t` — nil-safe for nil `mc` and nil stored value.
 
@@ -174,6 +185,7 @@ sequenceDiagram
 | Shared object | Writers | Protection |
 |---------------|---------|------------|
 | `Tracer.partners`, `Tracer.rules` | `Begin` and `Complete` from concurrent requests | `Tracer.mu` around the whole decision (check-and-reserve is atomic → FR-10 AC2); reservations are leased and given back in `Begin` once expired unconfirmed (FR-10 AC4) |
+| `reservation.emitted` | `exitpoint` sets it, `Begin` reads it when giving back leases | `atomic.Bool`: set with compare-and-swap, so exactly one `exitpoint` writes the packet |
 | `hookstage.ModuleContext` | executor + hooks | PBS's own `RWMutex`; the module only stores pointers |
 | `AuctionTrace` fields | concurrent `bidder_request` / `raw_bidder_response` goroutines, then `auction_response`, `exitpoint` | `AuctionTrace.mu`; marshalling happens **outside** the lock, append inside |
 | output queue | `exitpoint` of concurrent requests (producers), one writer goroutine (consumer) | buffered channel of 64 packets; `Emit` is a non-blocking send |
@@ -226,7 +238,10 @@ No account-level configuration is read (`miCtx.AccountConfig` ignored).
   there; one module-context `Get` per later hook. No lock is taken: `Tracer.mu` is reached only when the account matches a rule.
 - Rules cap the number of traced auctions per process, so the steady-state cost of the module is the untraced path. Its allocation
   budget is asserted in the default test suite; timing is measured by the benchmarks (`workspace/test-specs/load.md`).
-- Trace memory is released at `exitpoint` by clearing the context key; the `ModuleContext` itself is owned by the executor and dies with the request.
+- The tracer holds reservations, never traces. A trace is referenced only by its request's `ModuleContext`, which the executor
+  owns and drops with the request; `exitpoint` also clears the context key. A trace PBS abandons after the trigger is therefore
+  released with its request as well, and only its reservation, a few dozen bytes, waits for the lease (NFR-02). Removing a
+  reservation uses `slices.Delete`/`DeleteFunc`, which clear the vacated elements of the backing array.
 
 ## 10. Packaging (Docker)
 

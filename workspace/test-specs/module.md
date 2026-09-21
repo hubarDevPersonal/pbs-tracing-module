@@ -165,7 +165,7 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 - Given a missing module context, missing payload fields, or payload types other than expected
 - Then no hook panics and no hook fails; a panic raised inside a hook is recovered, logged and turned into a successful empty result
 
-## Memory on untraced traffic
+## Memory
 
 **M-33 The entrypoint copy of an untraced request is released at the trigger decision** — NFR-02
 - Given a request whose account has no rule, or whose partner is stopped
@@ -181,6 +181,12 @@ writer, the endpoint is `/openrtb2/auction`, and "an auction" means the module's
 - Given every partner has started and the latest window end among them has passed
 - When `entrypoint` runs for any request
 - Then no body is copied, even though no partner has been refused yet
+
+**M-38 No traced auction stays in memory after its request** — NFR-02, FR-10 AC4
+- Given a traced partner with one auction that completed and one abandoned after the trigger (its `exitpoint` never runs)
+- When both requests have let go of their auctions, and later the partner's window closes
+- Then the data collected for neither auction is still held by the module; the abandoned auction's slot still counts until its
+  lease ends, and a partner stopped for good holds no reservations
 
 ## Concurrency
 

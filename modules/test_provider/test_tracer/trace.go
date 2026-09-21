@@ -21,13 +21,13 @@ type AuctionTrace struct {
 	packetIndex     int
 	auctionID       string
 	startedAt       time.Time
+	slot            *reservation // the partner's slot this trace holds; also records that the packet was emitted
 	incoming        *RequestPacket
 	bidderRequests  []BidderRequestPacket
 	bidderResponses []BidderResponsePacket
 	final           *ResponsePacket
 	auctionResp     *openrtb2.BidResponse // seen at auction_response, marshaled only as a fallback
 	auctionRespAt   time.Time
-	emitted         bool
 }
 
 // PartnerID returns the partner the trace belongs to.
@@ -118,22 +118,10 @@ func (a *AuctionTrace) AuctionResponse() (resp *openrtb2.BidResponse, at time.Ti
 	return a.auctionResp, a.auctionRespAt
 }
 
-func (a *AuctionTrace) isEmitted() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.emitted
-}
+func (a *AuctionTrace) isEmitted() bool { return a.slot.emitted.Load() }
 
 // tryMarkEmitted flips the emitted flag; it returns true only for the first caller (FR-08 AC3).
-func (a *AuctionTrace) tryMarkEmitted() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.emitted {
-		return false
-	}
-	a.emitted = true
-	return true
-}
+func (a *AuctionTrace) tryMarkEmitted() bool { return a.slot.emitted.CompareAndSwap(false, true) }
 
 // Packet builds the output object. It never returns nil slices (FR-08 / spec §5).
 func (a *AuctionTrace) Packet(completedAt time.Time) TracePacket {

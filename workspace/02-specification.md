@@ -126,7 +126,7 @@ at `exitpoint`. A new trace is refused while every slot is reserved or confirmed
 | ID | Requirement |
 |----|-------------|
 | NFR-01 | Hook latency: O(size of payload) marshalling only; no network or disk I/O; no hook waits for stdout (FR-08 AC1a). Once no request can be traced any more (every partner stopped for good, or every partner started and every window closed) `entrypoint` no longer copies request bodies. |
-| NFR-02 | Memory: module-level state bounded by number of rules plus the output queue (FR-08 AC1a); the entrypoint body copy is released at `processed_auction_request` for requests that are not traced, and the trace at `exitpoint` for those that are. |
+| NFR-02 | Memory: module-level state is, per rule, one partner state and at most `TracePacketsAmount` slot reservations of a few dozen bytes each, plus the output queue (FR-08 AC1a); it never holds a trace. The entrypoint body copy is released at `processed_auction_request` for requests that are not traced, and a trace when its request ends — whether its packet was written or PBS abandoned the auction after the trigger. |
 | NFR-03 | Compatibility: builds with the PBS module's Go version (1.25) and the v4 module path; no new third-party dependencies. |
 | NFR-04 | Code quality: `gofmt`, `go vet` clean; unit tests in the same package; concurrency tests named `TestRace*` per PBS's own `docs/developers/automated-tests.md`. |
 | NFR-05 | Testability: clock (`func() time.Time`) and output writer (`io.Writer`) are injectable; production wiring uses `time.Now` and `os.Stdout`. |
@@ -137,22 +137,23 @@ at `exitpoint`. A new trace is refused while every slot is reserved or confirmed
 
 ```text
 Rule           { PartnerID, Duration, TracePacketsAmount }              // immutable, hardcoded
-PartnerState   { firstTracedAt time.Time, packets int, stopReason }     // per PartnerID, module-global, mutex-guarded
+PartnerState   { firstTracedAt time.Time, packets int, stopReason, pending []Reservation }   // per PartnerID, mutex-guarded
+Reservation    { startedAt time.Time, emitted bool }                    // one slot; the state never holds a trace
 
 Begin(partnerID, incomingAt, now):                                     // incomingAt: entrypoint time of the request
   rule, ok := rules[partnerID];            if !ok            → not traced
   st := state[partnerID] (create on first use)
   if st.stopReason == duration_exceeded                      → not traced
   if st.packets == 0: st.firstTracedAt = incomingAt
-  elif incomingAt - st.firstTracedAt > rule.Duration: st.stopReason = duration_exceeded → not traced
+  elif incomingAt - st.firstTracedAt > rule.Duration: st.stopReason = duration_exceeded; st.pending = [] → not traced
   if st.packets >= rule.TracePacketsAmount:
-    give back pending slots older than the lease (now - startedAt > 5 min) that never wrote a packet
+    give back reservations older than the lease (now - startedAt > 5 min) that never wrote a packet
     if still st.packets >= rule.TracePacketsAmount: st.stopReason = amount_reached → not traced
-  st.packets++; st.pending += trace                          // slot reserved
+  st.packets++; st.pending += reservation{startedAt: now}    // slot reserved; the trace points at it
   if st.packets == rule.TracePacketsAmount: st.stopReason = amount_reached      // further requests refused
   → traced, packetIndex = st.packets
 
-Complete(trace):  st.pending -= trace                        // slot confirmed at exitpoint
+Complete(trace):  st.pending -= trace's reservation          // slot confirmed at exitpoint
 ```
 
 State diagram per partner: `idle → tracing → stopped(duration_exceeded | amount_reached)`; `duration_exceeded` is terminal,

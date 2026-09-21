@@ -1,6 +1,7 @@
 package testtracer
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,9 +40,17 @@ type Tracer struct {
 
 type partnerState struct {
 	firstTracedAt time.Time
-	packets       int             // slots taken: written packets plus unconfirmed reservations
-	stopReason    StopReason      // StopReasonAmount is revoked when a lease expires
-	pending       []*AuctionTrace // reserved and not yet confirmed
+	packets       int            // slots taken: written packets plus unconfirmed reservations
+	stopReason    StopReason     // StopReasonAmount is revoked when a lease expires
+	pending       []*reservation // reserved and not yet confirmed
+}
+
+// reservation is one packet slot handed out to a trace. The tracer keeps reservations, never the traces
+// themselves: a trace lives only in its request's module context, so its payload is released when the
+// request ends, whether the packet was written or PBS abandoned the auction after the trigger (NFR-02).
+type reservation struct {
+	startedAt time.Time
+	emitted   atomic.Bool // the packet has been handed to the output; the lease can no longer give the slot back
 }
 
 // PartnerStatus is a read-only view of a partner's state for tests and diagnostics.
@@ -129,16 +138,18 @@ func (t *Tracer) Begin(partnerID, auctionID string, incomingAt time.Time) (*Auct
 		}
 	}
 	st.packets++
+	slot := &reservation{startedAt: now}
 	trace := &AuctionTrace{
 		partnerID:       partnerID,
 		rule:            rule,
 		packetIndex:     st.packets,
 		auctionID:       auctionID,
 		startedAt:       now.UTC(),
+		slot:            slot,
 		bidderRequests:  make([]BidderRequestPacket, 0, 4),
 		bidderResponses: make([]BidderResponsePacket, 0, 4),
 	}
-	st.pending = append(st.pending, trace)
+	st.pending = append(st.pending, slot)
 	if st.packets >= rule.TracePacketsAmount { // FR-10: the last slot has been taken
 		t.stop(st, StopReasonAmount)
 	}
@@ -154,30 +165,31 @@ func (t *Tracer) Complete(trace *AuctionTrace) {
 	if st == nil {
 		return
 	}
-	st.pending = remove(st.pending, trace)
+	if i := slices.Index(st.pending, trace.slot); i >= 0 {
+		st.pending = slices.Delete(st.pending, i, i+1) // clears the vacated element of the backing array
+	}
 	t.refresh()
 }
 
-// reclaim gives back the slots of pending traces whose lease is over and that never wrote a
-// packet. Caller holds t.mu.
+// reclaim gives back the slots whose lease is over and whose packet was never written. Caller holds t.mu.
 func (t *Tracer) reclaim(st *partnerState, rule Rule, now time.Time) {
-	kept := st.pending[:0]
-	for _, tr := range st.pending {
-		if now.Sub(tr.startedAt) > slotLease && !tr.isEmitted() {
-			st.packets--
-			continue
-		}
-		kept = append(kept, tr)
-	}
-	st.pending = kept
+	before := len(st.pending)
+	st.pending = slices.DeleteFunc(st.pending, func(r *reservation) bool { // clears the tail of the backing array
+		return now.Sub(r.startedAt) > slotLease && !r.emitted.Load()
+	})
+	st.packets -= before - len(st.pending)
 	if st.stopReason == StopReasonAmount && st.packets < rule.TracePacketsAmount {
 		st.stopReason = StopReasonNone
 	}
 }
 
-// stop moves a partner to a stopped state. Caller holds t.mu.
+// stop moves a partner to a stopped state. Caller holds t.mu. A partner stopped by duration never
+// traces again, so no slot of it will ever be given back and its reservations are dropped.
 func (t *Tracer) stop(st *partnerState, reason StopReason) {
 	st.stopReason = reason
+	if reason == StopReasonDuration {
+		st.pending = nil
+	}
 	t.refresh()
 }
 
@@ -226,13 +238,4 @@ func (t *Tracer) Status(partnerID string) (status PartnerStatus, found bool) {
 		return PartnerStatus{}, false
 	}
 	return PartnerStatus{Packets: st.packets, FirstTracedAt: st.firstTracedAt, StopReason: st.stopReason}, true
-}
-
-func remove(traces []*AuctionTrace, trace *AuctionTrace) []*AuctionTrace {
-	for i, tr := range traces {
-		if tr == trace {
-			return append(traces[:i], traces[i+1:]...)
-		}
-	}
-	return traces
 }

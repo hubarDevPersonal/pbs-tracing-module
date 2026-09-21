@@ -1,8 +1,10 @@
 package testtracer
 
 import (
+	"runtime"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -270,4 +272,39 @@ func TestTracerBegin_WindowIsMeasuredBetweenArrivals(t *testing.T) {
 	assert.True(t, ok)
 	_, ok = tr.Begin("p", "a3", clock.Now())
 	assert.False(t, ok)
+}
+
+// M-38. NFR-02, FR-10 AC4: the tracer keeps slot reservations, not traces. A completed auction and one
+// abandoned after the trigger are both collectable once their requests let go of them; the abandoned one
+// still holds its slot until the lease ends, and a partner stopped for good keeps no reservations.
+func TestTracer_KeepsNoTraceReachable(t *testing.T) {
+	clock := newFakeClock(testStart)
+	tr := newTestTracer(t, []Rule{{PartnerID: "p", Duration: time.Minute, TracePacketsAmount: 3}}, clock)
+
+	// Each trace lives only inside its closure, as in production it lives only in its request's module context.
+	abandoned := func() weak.Pointer[AuctionTrace] {
+		trace, ok := tr.Begin("p", "abandoned", clock.Now()) // PBS fails the auction: exitpoint never runs
+		require.True(t, ok)
+		trace.SetIncomingRequest(clock.Now(), []byte(`{"id":"abandoned"}`))
+		return weak.Make(trace)
+	}()
+	completed := func() weak.Pointer[AuctionTrace] {
+		trace, ok := tr.Begin("p", "completed", clock.Now())
+		require.True(t, ok)
+		trace.SetIncomingRequest(clock.Now(), []byte(`{"id":"completed"}`))
+		require.True(t, trace.tryMarkEmitted())
+		tr.Complete(trace)
+		return weak.Make(trace)
+	}()
+
+	runtime.GC()
+	assert.Nil(t, completed.Value(), "a completed trace is still reachable from the tracer")
+	assert.Nil(t, abandoned.Value(), "an abandoned trace is still reachable from the tracer")
+	st, _ := tr.Status("p")
+	assert.Equal(t, 2, st.Packets, "the abandoned auction keeps its slot until the lease ends")
+
+	clock.Advance(2 * time.Minute)
+	_, ok := tr.Begin("p", "late", clock.Now()) // the window has closed: the partner stops for good
+	require.False(t, ok)
+	assert.Empty(t, tr.partners["p"].pending, "a partner stopped for good keeps no reservations")
 }
