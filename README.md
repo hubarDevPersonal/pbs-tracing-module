@@ -86,15 +86,15 @@ Measured on a 4-CPU Docker VM against stub bidders answering in 10 ms, three run
 
 | | hooks off | module on, nothing traced | every auction traced |
 |---|---:|---:|---:|
-| CPU per auction at 800 auctions/s | 1.79 ms | 1.94 ms (+0.2 ms) | 2.20 ms (+0.4 ms) |
-| p99 at 800 auctions/s | 15.5 ms | 18.3 ms | 20.0 ms |
+| CPU per auction at 800 auctions/s | 1.91 ms | 2.03 ms (+0.1 ms) | 2.36 ms (+0.5 ms) |
+| p99 at 800 auctions/s | 14.7 ms | 17.8 ms | 24.1 ms |
 | highest sustained step | 1600/s | 1600/s | 800/s |
-| closed-loop throughput, 128 in flight | 2389/s | 2230/s | 1244/s |
-| share of PBS CPU on paths through the module (closed loop) | 0 | 0.04 % | 2.8 % |
+| closed-loop throughput, 128 in flight | 2323/s | 2097/s | 1189/s |
+| share of PBS CPU on paths through the module (closed loop) | 0 | 0.08 % | 2.4 % |
 
 The module's own hooks cost tens of microseconds. On untraced traffic the cost is the copy of the request body at `entrypoint`
 plus PBS's hook execution, about 0.2 ms of CPU per auction. With every auction traced the limit is not the module but the
-stdout path: on this VM the container log driver absorbs about 1300 packets/s (13 MB/s), above that the queue drops packets and
+stdout path: on this VM the container log driver absorbs about 1200 packets/s (12 MB/s), above that the queue drops packets and
 the whole server, sharing the VM's CPUs with the log driver, slows down. Rules bound how many auctions are traced, so this is a
 ceiling on the tracing rate, not on the server.
 
@@ -120,7 +120,7 @@ Every line of [the task](workspace/assessment/00-assessment.md) with what proves
 | `Account.ID` maps to `PartnerID` | M-04, [analysis §2.1](workspace/01-analysis.md) | the sample resolves to `parentAccount` `664-025-677-881`, not `publisher.id` |
 | `test: 1` yields an appnexus bid | not reproducible from any network tried, [analysis §2.3](workspace/01-analysis.md) | item 3 is proven live with onetag's test publisher (phase B of `make e2e`) |
 | Only `/openrtb2/auction` | M-26 | checked by the plan and by every hook |
-| Fit for a high-load server (implied) | L-01 … L-12; [workspace/06-highload-report.md](workspace/06-highload-report.md) | hooks cost tens of µs and ≤ 0.8 ms of CPU per auction with every auction traced; a stalled or saturated stdout drops packets instead of delaying auctions |
+| Fit for a high-load server (implied) | L-01 … L-12; [workspace/06-highload-report.md](workspace/06-highload-report.md) | hooks cost tens of µs and ≤ 0.9 ms of CPU per auction at every sustained step with every auction traced; a stalled or saturated stdout drops packets instead of delaying auctions |
 
 ## Decisions and limits
 
