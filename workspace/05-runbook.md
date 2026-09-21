@@ -13,11 +13,13 @@
 
 ```bash
 make docker-build                       # PBS @ pinned commit + module; module tests run inside the build
-docker run --rm -p 8080:8080 pbs-tracer:local 2>pbs.log | tee trace.ndjson
+docker run --rm -p 8080:8080 pbs-tracer:local 1>trace.ndjson 2>pbs.log
 sh workspace/assessment/02-send-bid-request.sh               # in another terminal; repeat > TracePacketsAmount times
+tail -f trace.ndjson
 ```
 
-Each traced auction appears as one JSON line on the container's stdout. `make e2e` does all of this and verifies the result (§5).
+Each traced auction appears as one JSON line on the container's stdout, redirected to a file: a pipe whose reader exits kills
+PBS with `EPIPE` (§7). `make e2e` does all of this and verifies the result (§5).
 
 ## 2. Install the module into a PBS checkout
 

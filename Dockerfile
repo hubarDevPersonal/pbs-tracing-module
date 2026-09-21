@@ -4,7 +4,7 @@
 # and runs it with the assessment's pbs.yaml. Trace packets go to the container's stdout, PBS logs to stderr:
 #
 #   docker build -t pbs-tracer .
-#   docker run --rm -p 8080:8080 pbs-tracer 2>pbs.log | tee trace.ndjson
+#   docker run --rm -p 8080:8080 pbs-tracer 1>trace.ndjson 2>pbs.log
 #
 # Build args:
 #   PBS_REPO  upstream repository (default github.com/prebid/prebid-server)

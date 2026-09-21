@@ -156,7 +156,7 @@ func hlMeasure(t *testing.T, pbs *pbsContainer, client *http.Client, cfg hlConfi
 	before := pbs.metrics(t, metricHookCount, metricHookSum, metricTimeouts, metricFailed, metricErrors)
 	memBefore := pbs.memStats(t)
 	cpuBefore := cpuUsage(t)
-	stdoutBefore, stderrBefore := containerLogs(t)
+	stdoutBefore, stderrBefore := settledLogs(t) // the previous run's tail must have landed, or it counts here
 
 	var profPath string
 	profDone := make(chan struct{})
@@ -212,17 +212,22 @@ func hlMeasure(t *testing.T, pbs *pbsContainer, client *http.Client, cfg hlConfi
 }
 
 // settledLogs reads the container logs once their stdout line count has stopped growing: the module's
-// queue and Docker's log driver both trail the last response.
+// queue and Docker's log driver both trail the last response. Three unchanged polls in a row, because
+// a log driver on a loaded host stalls for longer than one poll interval and one quiet poll is not
+// the end of the run.
 func settledLogs(t *testing.T) (stdout, stderr []byte) {
 	t.Helper()
-	last := -1
-	for range 20 {
+	const stablePolls = 3
+	last, stable := -1, 0
+	for range 40 {
 		time.Sleep(500 * time.Millisecond)
 		stdout, stderr = containerLogs(t)
 		if n := strings.Count(string(stdout), "\n"); n == last {
-			return stdout, stderr
+			if stable++; stable == stablePolls {
+				return stdout, stderr
+			}
 		} else {
-			last = n
+			last, stable = n, 0
 		}
 	}
 	return stdout, stderr

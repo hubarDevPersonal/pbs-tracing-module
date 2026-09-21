@@ -25,11 +25,13 @@ and never mutates payloads. Contract and decisions: [workspace/02-specification.
 
 ```bash
 make docker-build                                   # PBS @ pinned commit + module; module tests run inside the build
-docker run --rm -p 8080:8080 pbs-tracer:local 2>pbs.log | tee trace.ndjson
-sh workspace/assessment/02-send-bid-request.sh                           # other terminal; repeat > TracePacketsAmount times
+docker run --rm -p 8080:8080 pbs-tracer:local 1>trace.ndjson 2>pbs.log
+sh workspace/assessment/02-send-bid-request.sh      # other terminal; repeat > TracePacketsAmount times
+tail -f trace.ndjson                                # one JSON object per traced auction
 ```
 
-`make e2e` builds the image, starts it, sends the requests and checks the trace, the hook outcomes and the PBS log.
+stdout goes to a file, not a pipe: PBS dies on `EPIPE` if a pipe's reader exits (see Decisions below). `make e2e` builds the
+image, starts it, sends the requests and checks the trace, the hook outcomes and the PBS log.
 
 ## Repository layout
 
